@@ -3,6 +3,12 @@ name = "sirang"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "sirang"
+path = "./src/main.rs"
+
 [dependencies]
-clap = "4.5.23"
+bytes = "1.9.0"
+clap = { version = "4.5.23", features = ["cargo", "derive"] }
+s2n-quic = "1.51.0"
 tokio = { version = "1.42.0", features = ["full"] }
