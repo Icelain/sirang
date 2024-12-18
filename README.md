@@ -1,5 +1,6 @@
 Experimental TCP Tunnel over QUIC
 
-- [x] Functional
-- [ ] Tested
-- [ ] Benchmarked
+- [x] Functionality
+- [ ] Debug Logging(WIP)
+- [ ] Testing
+- [ ] Benchmarking
