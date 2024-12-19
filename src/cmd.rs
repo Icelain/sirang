@@ -45,16 +45,7 @@ pub async fn execute() {
                     .required(false)
                     .value_parser(value_parser!(SocketAddr)),
                 )
-                .arg(
-                    arg!(
-
-                        -d --debug "Turns on debug logging"
-
-                    )
-                    .required(false)
-                    .action(ArgAction::SetTrue)
-                )
-        )
+       )
         .subcommand(
             Command::new("local")
                 .about("Starts the local tcp forwarding server")
@@ -85,15 +76,16 @@ pub async fn execute() {
                     .required(true)
                     .value_parser(value_parser!(SocketAddr)),
                 )
-                .arg(
-                    arg!(
 
-                        -d --debug "Turns on debug logging"
+        )
+        .arg(
+            arg!(
 
-                    )
-                    .required(false)
-                    .action(ArgAction::SetTrue)
-                )
+                -d --debug "Turns on debug logging"
+
+            )
+            .required(false)
+            .action(ArgAction::SetTrue)
         )
 
         .get_matches();
@@ -106,6 +98,14 @@ pub async fn execute() {
 async fn handle_matches(
     arg_matches: ArgMatches,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    let mut log_builder = colog::default_builder();
+
+    if !arg_matches.get_flag("debug") {
+        log_builder.filter_level(log::LevelFilter::Off);
+    }
+
+    log_builder.init();
+
     if let Some(remote_matches) = arg_matches.subcommand_matches("remote") {
         let mut remote_config = remote::config::RemoteConfig::default();
 
@@ -137,14 +137,6 @@ async fn handle_matches(
                 std::fs::read_to_string(tls_key_file.to_str().unwrap().to_string())?;
         }
 
-        let mut log_builder = colog::default_builder();
-
-        if !remote_matches.get_flag("debug") {
-            log_builder.filter_level(log::LevelFilter::Off);
-        }
-
-        log_builder.init();
-
         remote::start_remote(remote_config).await?;
     }
 
@@ -167,14 +159,6 @@ async fn handle_matches(
             local_config.tls_cert =
                 std::fs::read_to_string(tls_cert_file.to_str().unwrap().to_string())?;
         }
-
-        let mut log_builder = colog::default_builder();
-
-        if !local_matches.get_flag("debug") {
-            log_builder.filter_level(log::LevelFilter::Off);
-        }
-
-        log_builder.init();
 
         local::start_local(local_config).await?;
     }
