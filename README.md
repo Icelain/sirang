@@ -1,6 +1,25 @@
-Experimental TCP Tunnel over QUIC
+# Experimental TCP Tunnel over QUIC
 
 Clone the repo and compile with ```cargo build --release```
+
+## On your remote server:
+```
+sirang remote [OPTIONS] --key <PATH> --cert <PATH> --forwardaddr <ADDRESS>
+```
+Here, ```--key``` and ```--cert``` and your tls key and tls certificate respectively.
+```--forwardaddr``` is the remote tcp_address you're forwarding your traffic to.
+
+By default, the remote quic server starts on address `0.0.0.0:4433`.
+To change this, you can specify the optional argument ```--addr``` to start the quic server on your preferred address.
+
+## On your local machine:
+```
+sirang local [OPTIONS] --cert <PATH> --remoteaddr <ADDRESS>
+```
+Here, ```--cert``` is the tls certificate of the remote server and ```--remoteaddr``` is the address of the remote quic server created with ```sirang remote```.
+
+By default, the local tcp server starts on `127.0.0.1:8080`.
+To change this, you can specify the optional argument ```--localaddr``` to start the tcp server on your preferred address.
 
 - [x] Functionality
 - [ ] Debug Logging(WIP)
