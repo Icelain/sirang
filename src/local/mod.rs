@@ -35,7 +35,7 @@ pub async fn start_local(
                 tokio::io::copy_bidirectional(&mut bidirectional_stream_c, &mut tcp_stream_c).await
             {
                 // Print any errors that occur during the data transfer
-                eprintln!("Error occurred during bidirectional copy: {e}");
+                log::warn!("Error occurred during bidirectional copy: {e}");
             }
         });
     }

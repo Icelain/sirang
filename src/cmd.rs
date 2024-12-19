@@ -1,7 +1,7 @@
 use crate::{errors, local, remote};
 use std::{net::SocketAddr, path::PathBuf};
 
-use clap::{arg, command, value_parser, ArgMatches, Command};
+use clap::{arg, command, value_parser, ArgAction, ArgMatches, Command};
 
 pub async fn execute() {
     let matches = command!()
@@ -45,6 +45,15 @@ pub async fn execute() {
                     .required(false)
                     .value_parser(value_parser!(SocketAddr)),
                 )
+                .arg(
+                    arg!(
+
+                        -d --debug "Turns on debug logging"
+
+                    )
+                    .required(false)
+                    .action(ArgAction::SetTrue)
+                )
         )
         .subcommand(
             Command::new("local")
@@ -76,13 +85,21 @@ pub async fn execute() {
                     .required(true)
                     .value_parser(value_parser!(SocketAddr)),
                 )
+                .arg(
+                    arg!(
 
+                        -d --debug "Turns on debug logging"
+
+                    )
+                    .required(false)
+                    .action(ArgAction::SetTrue)
+                )
         )
 
         .get_matches();
 
     if let Err(e) = handle_matches(matches).await {
-        eprintln!("Error occurred: {}", e);
+        log::error!("Error occured: {e}");
     }
 }
 
@@ -120,6 +137,14 @@ async fn handle_matches(
                 std::fs::read_to_string(tls_key_file.to_str().unwrap().to_string())?;
         }
 
+        let mut log_builder = colog::default_builder();
+
+        if !remote_matches.get_flag("debug") {
+            log_builder.filter_level(log::LevelFilter::Off);
+        }
+
+        log_builder.init();
+
         remote::start_remote(remote_config).await?;
     }
 
@@ -142,6 +167,15 @@ async fn handle_matches(
             local_config.tls_cert =
                 std::fs::read_to_string(tls_cert_file.to_str().unwrap().to_string())?;
         }
+
+        let mut log_builder = colog::default_builder();
+
+        if !local_matches.get_flag("debug") {
+            log_builder.filter_level(log::LevelFilter::Off);
+        }
+
+        log_builder.init();
+
         local::start_local(local_config).await?;
     }
 

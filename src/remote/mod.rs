@@ -10,7 +10,8 @@ pub async fn start_remote(
     config: config::RemoteConfig,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let mut server = quic_server(&config).await?;
-    println!("Quic server started");
+
+    log::info!("Quic server started");
 
     while let Some(mut connection) = server.accept().await {
         tokio::spawn(async move {
@@ -18,13 +19,13 @@ pub async fn start_remote(
                 // this is the client's socket address
                 let remote_quic_addr = connection.remote_addr().unwrap();
 
-                println!("Stream received from {remote_quic_addr}");
+                log::info!("Stream received from {remote_quic_addr}");
 
                 let tcp_stream = match TcpStream::connect(config.forward_address).await {
                     Ok(stream) => stream,
                     Err(e) => {
-                        eprintln!("Error connecting to the remote tcp address: {e}");
-                        break;
+                        log::warn!("Error connecting to the remote tcp address: {e}");
+                        return;
                     }
                 };
 
@@ -32,7 +33,11 @@ pub async fn start_remote(
                     let mut quic_stream_c = quic_stream;
                     let mut tcp_stream_c = tcp_stream;
 
-                    tokio::io::copy_bidirectional(&mut tcp_stream_c, &mut quic_stream_c).await
+                    if let Err(e) =
+                        tokio::io::copy_bidirectional(&mut tcp_stream_c, &mut quic_stream_c).await
+                    {
+                        log::warn!("Error while copying from the tcp stream to quic stream: {e}");
+                    }
                 });
             }
         });

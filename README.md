@@ -21,9 +21,13 @@ Here, ```--cert``` is the tls certificate of the remote server and ```--remotead
 By default, the local tcp server starts on `127.0.0.1:8080`.
 To change this, you can specify the optional argument ```--localaddr``` to start the tcp server on your preferred address.
 
+## General
+
+To turn on debug logging, use ```--debug``` with either command.
+
 ## Progress
 
 - [x] Functionality
-- [ ] Debug Logging(WIP)
+- [x] Debug Logging
 - [ ] Testing
 - [ ] Benchmarking
