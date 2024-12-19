@@ -7,7 +7,7 @@ Clone the repo and compile with ```cargo build --release```
 
 ### On your remote server:
 ```
-sirang remote [OPTIONS] --key <PATH> --cert <PATH> --forwardaddr <ADDRESS>
+sirang [OPTIONS] remote [OPTIONS] --key <PATH> --cert <PATH> --forwardaddr <ADDRESS>
 ```
 Here, ```--key``` and ```--cert``` and your tls key and tls certificate respectively.
 ```--forwardaddr``` is the remote tcp_address you're forwarding your traffic to.
@@ -17,7 +17,7 @@ To change this, you can specify the optional argument ```--addr``` to start the 
 
 ### On your local machine:
 ```
-sirang local [OPTIONS] --cert <PATH> --remoteaddr <ADDRESS>
+sirang [OPTIONS] local [OPTIONS] --cert <PATH> --remoteaddr <ADDRESS>
 ```
 Here, ```--cert``` is the tls certificate of the remote server and ```--remoteaddr``` is the address of the remote quic server created with ```sirang remote```.
 
