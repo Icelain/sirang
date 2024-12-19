@@ -1,4 +1,4 @@
-# Experimental TCP Tunnel over QUIC
+# An Experimental TCP Tunnel over QUIC
 
 ## Build
 Clone the repo and compile with ```cargo build --release```
