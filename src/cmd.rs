@@ -87,6 +87,15 @@ pub async fn execute() {
             .required(false)
             .action(ArgAction::SetTrue)
         )
+        .arg(
+            arg!(
+
+                -b --buffersize [SIZE] "Sets the buffer size"
+
+            )
+            .required(false)
+            .value_parser(value_parser!(usize))
+        )
 
         .get_matches();
 
@@ -105,6 +114,8 @@ async fn handle_matches(
     }
 
     log_builder.init();
+
+    let buffersize = arg_matches.get_one::<usize>("buffersize");
 
     if let Some(remote_matches) = arg_matches.subcommand_matches("remote") {
         let mut remote_config = remote::config::RemoteConfig::default();
@@ -137,6 +148,10 @@ async fn handle_matches(
                 std::fs::read_to_string(tls_key_file.to_str().unwrap().to_string())?;
         }
 
+        if let Some(buffer_size) = buffersize {
+            remote_config.buffer_size = *buffer_size;
+        }
+
         remote::start_remote(remote_config).await?;
     }
 
@@ -158,6 +173,10 @@ async fn handle_matches(
 
             local_config.tls_cert =
                 std::fs::read_to_string(tls_cert_file.to_str().unwrap().to_string())?;
+        }
+
+        if let Some(buffer_size) = buffersize {
+            local_config.buffer_size = *buffer_size;
         }
 
         local::start_local(local_config).await?;

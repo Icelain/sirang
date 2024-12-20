@@ -9,7 +9,10 @@ pub async fn start_remote(
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     // Initialize the QUIC server using provided configuration
     let mut server = quic_server(&config).await?;
-    log::info!("Quic server started");
+    let buffer_size = config.buffer_size;
+    let address = config.address;
+
+    log::info!("Quic server started at: {address} with buffer size: {buffer_size}");
 
     // Accept incoming QUIC connections in a loop
     while let Some(mut connection) = server.accept().await {
@@ -37,8 +40,13 @@ pub async fn start_remote(
 
                     // Copy data bidirectionally between the QUIC and TCP streams
                     // This allows traffic to flow in both directions
-                    if let Err(e) =
-                        tokio::io::copy_bidirectional(&mut tcp_stream_c, &mut quic_stream_c).await
+                    if let Err(e) = tokio::io::copy_bidirectional_with_sizes(
+                        &mut tcp_stream_c,
+                        &mut quic_stream_c,
+                        buffer_size,
+                        buffer_size,
+                    )
+                    .await
                     {
                         log::warn!("Error while copying from the tcp stream to quic stream: {e}");
                     }

@@ -5,6 +5,7 @@ pub struct RemoteConfig {
     pub address: SocketAddr,
     pub tls_cert: String,
     pub tls_key: String,
+    pub buffer_size: usize,
 }
 
 impl Default for RemoteConfig {
@@ -14,6 +15,7 @@ impl Default for RemoteConfig {
             address: SocketAddr::from_str("0.0.0.0:4433").unwrap(),
             tls_cert: String::new(),
             tls_key: String::new(),
+            buffer_size: 1024 * 32,
         }
     }
 }
