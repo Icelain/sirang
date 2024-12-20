@@ -27,7 +27,8 @@ To change this, you can specify the optional argument ```--localaddr``` to start
 ### General:
 
 To turn on debug logging, use ```--debug``` before either command. <br/>
-To set the buffer size, use ```--buffersize``` before either command.
+To set the buffer size(in bytes), use ```--buffersize``` before either command. The default buffer size is 32KB.
+
 
 ## Progress
 
