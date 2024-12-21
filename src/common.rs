@@ -14,6 +14,7 @@ pub mod proto {
 
     pub enum ProtoCommand {
         CONNECTED(SocketAddr),
+        CLOSED,
     }
 
     impl ProtoCommand {
@@ -25,6 +26,9 @@ pub mod proto {
                             .concat()
                             .as_slice(),
                     );
+                }
+                &ProtoCommand::CLOSED => {
+                    return Bytes::from_static(b"CLOSED");
                 }
             }
         }
@@ -43,6 +47,9 @@ pub mod proto {
                         }
 
                         return None;
+                    }
+                    b"CLOSED" => {
+                        return Some(ProtoCommand::CLOSED);
                     }
                     _ => {}
                 }

@@ -49,7 +49,7 @@ pub async fn forward_remote(
                     )
                     .await
                     {
-                        log::warn!("Error while copying from the tcp stream to quic stream: {e}");
+                        log::warn!("Error while bidirectional copy: {e}");
                     }
                 });
             }
