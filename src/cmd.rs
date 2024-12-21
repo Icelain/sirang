@@ -42,7 +42,7 @@ pub async fn execute() {
                         .arg(
                             arg!(
 
-                                -a --addr <ADDRESS> "Address to run the remote server on"
+                                -q --quicaddr <ADDRESS> "Address to run the remote quic server on"
 
                             )
                             .required(false)
@@ -131,7 +131,7 @@ pub async fn execute() {
                                 -q --quicaddr <ADDRESS> "Address to run the remote quic server on"
 
                             )
-                            .required(true)
+                            .required(false)
                             .value_parser(value_parser!(SocketAddr)),
                         )
                         .arg(
@@ -162,7 +162,7 @@ pub async fn execute() {
                                 -l --localaddr <ADDRESS> "Address to run the local tcp forwarding server on"
 
                             )
-                            .required(false)
+                            .required(true)
                             .value_parser(value_parser!(SocketAddr)),
                         )
                         .arg(
@@ -236,18 +236,21 @@ async fn handle_matches(
     let buffersize = cmd_matches.get_one::<usize>("buffersize");
 
     if let Some(remote_matches) = cmd_matches.subcommand_matches("remote") {
-        let mut remote_config = remote::config::RemoteConfig::default();
+        let mut remote_config = remote::config::RemoteConfig::new(&tunnel_type);
 
-        if let Some(forward_addr) = remote_matches.get_one::<SocketAddr>("forwardaddr") {
-            remote_config.forward_address = Some(*forward_addr);
+        if remote_config.tunnel_type == TunnelType::Reverse {
+            if let Some(tcp_addr) = remote_matches.get_one::<SocketAddr>("tcpaddr") {
+                remote_config.tcp_reverse_address = Some(*tcp_addr);
+            }
+        } else {
+             if let Some(forward_addr) = remote_matches.get_one::<SocketAddr>("forwardaddr") {
+                remote_config.tcp_forward_address = Some(*forward_addr);
+            }       
+
         }
 
-        if let Some(tcp_addr) = remote_matches.get_one::<SocketAddr>("tcpaddr") {
-            remote_config.tcp_address = Some(*tcp_addr);
-        }
-
-        if let Some(addr) = remote_matches.get_one::<SocketAddr>("addr") {
-            remote_config.address = *addr;
+        if let Some(addr) = remote_matches.get_one::<SocketAddr>("quicaddr") {
+            remote_config.quic_address = *addr;
         }
 
         if let Some(tls_cert_file) = remote_matches.get_one::<PathBuf>("cert") {
@@ -273,8 +276,6 @@ async fn handle_matches(
         if let Some(buffer_size) = buffersize {
             remote_config.buffer_size = *buffer_size;
         }
-
-        remote_config.tunnel_type = tunnel_type; 
 
         remote::start_remote(remote_config).await?;
     }

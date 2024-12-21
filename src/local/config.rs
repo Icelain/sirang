@@ -1,4 +1,4 @@
-use crate::common::TunnelType;
+use crate::common::{TunnelType, DEFAULT_BUFSIZE};
 use std::{net::SocketAddr, str::FromStr};
 
 pub struct LocalConfig {
@@ -19,7 +19,7 @@ impl Default for LocalConfig {
             remote_quic_server_addr: SocketAddr::from_str("0.0.0.0:0").unwrap(),
             // tls_cert is guaranteed to be properly set later
             tls_cert: String::new(),
-            buffer_size: 1024 * 32,
+            buffer_size: DEFAULT_BUFSIZE,
         }
     }
 }

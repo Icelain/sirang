@@ -7,16 +7,12 @@ pub async fn forward_remote(
     config: RemoteConfig,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     // Initialize the QUIC server using provided configuration
-    let mut server = quic::new_quic_server(
-        config.forward_address.unwrap(),
-        &config.tls_cert,
-        &config.tls_key,
-    )
-    .await?;
+    let mut server =
+        quic::new_quic_server(config.quic_address, &config.tls_cert, &config.tls_key).await?;
     let buffer_size = config.buffer_size;
-    let address = config.address;
+    let local_quic_address = config.quic_address;
 
-    log::info!("Quic server started at: {address} with buffer size: {buffer_size}");
+    log::info!("Quic server started at: {local_quic_address} with buffer size: {buffer_size}");
 
     // Accept incoming QUIC connections in a loop
     while let Some(mut connection) = server.accept().await {
@@ -29,7 +25,8 @@ pub async fn forward_remote(
                 log::info!("Stream received from {remote_quic_addr}");
 
                 // Attempt to establish TCP connection to the forward address
-                let tcp_stream = match TcpStream::connect(config.forward_address.unwrap()).await {
+                let tcp_stream = match TcpStream::connect(config.tcp_forward_address.unwrap()).await
+                {
                     Ok(stream) => stream,
                     Err(e) => {
                         log::warn!("Error connecting to the remote tcp address: {e}");

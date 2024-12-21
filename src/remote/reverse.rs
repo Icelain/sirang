@@ -9,12 +9,15 @@ pub async fn reverse_remote(
     config: RemoteConfig,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let mut quic_srv =
-        quic::new_quic_server(config.address, &config.tls_cert, &config.tls_key).await?;
+        quic::new_quic_server(config.quic_address, &config.tls_cert, &config.tls_key).await?;
+
+    let quic_address = config.quic_address;
+    log::info!("Quic Server started on: {quic_address}");
 
     // only accept a single quic connection
     while let Some(mut quic_conn) = quic_srv.accept().await {
         if let Ok(Some(mut quic_stream)) = quic_conn.accept_bidirectional_stream().await {
-            let tcp_srv = match TcpListener::bind(config.tcp_address.unwrap()).await {
+            let tcp_srv = match TcpListener::bind(config.tcp_reverse_address.unwrap()).await {
                 Ok(srv) => srv,
                 Err(e) => {
                     log::warn!("Tcp Listener could not be created: {e}");
@@ -22,10 +25,11 @@ pub async fn reverse_remote(
                 }
             };
 
-            let connected_msg = proto::ProtoCommand::CONNECTED(config.address).deserialize();
+            let connected_msg =
+                proto::ProtoCommand::CONNECTED(config.tcp_reverse_address.unwrap()).deserialize();
             if let Err(e) = quic_stream.send(connected_msg).await {
                 log::warn!(
-                    "Error while sending connect message to local reverse tunnel instance: {e}"
+                    "Error while sending connect handshake message to local reverse tunnel instance: {e}"
                 );
                 continue;
             }
