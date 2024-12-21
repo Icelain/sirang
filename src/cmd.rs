@@ -128,7 +128,7 @@ pub async fn execute() {
                         .arg(
                             arg!(
 
-                                -q --addr <ADDRESS> "Address to run the remote quic server on"
+                                -q --quicaddr <ADDRESS> "Address to run the remote quic server on"
 
                             )
                             .required(true)
@@ -137,7 +137,7 @@ pub async fn execute() {
                         .arg(
                             arg!(
 
-                                -a --tcpaddr <ADDRESS> "Address to run the remote tcp server on"
+                                -t --tcpaddr <ADDRESS> "Address to run the remote tcp server on"
 
                             )
                             .required(false)
