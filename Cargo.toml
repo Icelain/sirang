@@ -8,7 +8,7 @@ description = "A forward and reverse TCP tunnel over QUIC"
 homepage="https://github.com/icelain/sirang"
 repository="https://github.com/icelain/sirang"
 readme="README.md"
-keywords = ["cli", "tunnel", "tcp", "reverse tunnel", "proxy"]
+keywords = ["cli", "tunnel", "tcp", "networking", "proxy"]
 categories = ["command-line-utilities"]
 default-run = "sirang"
 
