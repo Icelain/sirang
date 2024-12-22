@@ -2,6 +2,8 @@
 name = "sirang"
 version = "0.1.0"
 edition = "2021"
+license = "mit"
+description = "A forward and reverse TCP tunnel over QUIC"
 
 [[bin]]
 name = "sirang"
