@@ -106,16 +106,12 @@ async fn handle_command_stream(
 ) {
     let (mut receiver, mut sender) = command_stream.split();
 
-    let close_channel_sender_c = close_channel_sender.clone();
-
     tokio::spawn(async move {
         if let Ok(_) = tokio::signal::ctrl_c().await {
             if let Err(e) = sender.send(ProtoCommand::CLOSED.deserialize()).await {
                 log::warn!("Could not send CLOSED to remote reverse tunnel instance: {e}");
             }
         }
-
-        close_channel_sender_c.send(()).await.unwrap();
     });
 
     while let Ok(Some(cmd_data)) = receiver.receive().await {
@@ -129,6 +125,11 @@ async fn handle_command_stream(
         match cmd {
             ProtoCommand::CLOSED => {
                 log::info!("Remote tunnel instance has closed the connection");
+                close_channel_sender.send(()).await.unwrap();
+                break;
+            }
+            ProtoCommand::ACK => {
+                log::info!("Closing local instance");
                 close_channel_sender.send(()).await.unwrap();
                 break;
             }

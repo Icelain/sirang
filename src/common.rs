@@ -15,6 +15,7 @@ pub mod proto {
     pub enum ProtoCommand {
         CONNECTED(SocketAddr),
         CLOSED,
+        ACK,
     }
 
     impl ProtoCommand {
@@ -29,6 +30,9 @@ pub mod proto {
                 }
                 &ProtoCommand::CLOSED => {
                     return Bytes::from_static(b"CLOSED");
+                }
+                &ProtoCommand::ACK => {
+                    return Bytes::from_static(b"ACK");
                 }
             }
         }
@@ -50,6 +54,9 @@ pub mod proto {
                     }
                     b"CLOSED" => {
                         return Some(ProtoCommand::CLOSED);
+                    }
+                    b"ACK" => {
+                        return Some(ProtoCommand::ACK);
                     }
                     _ => {}
                 }
