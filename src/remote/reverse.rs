@@ -1,13 +1,18 @@
+use super::config::RemoteConfig;
 use crate::common::proto;
 use crate::quic;
-
-use super::config::RemoteConfig;
 use s2n_quic::stream::BidirectionalStream;
 use std::error::Error;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::{self, channel, Sender};
 use tokio::sync::Mutex;
+
+#[derive(Debug)]
+enum CloseAction {
+    CloseProcess,
+    CloseStream,
+}
 
 pub async fn reverse_remote(
     config: RemoteConfig,
@@ -18,20 +23,29 @@ pub async fn reverse_remote(
     let quic_address = config.quic_address;
     log::info!("Quic Server started on: {quic_address}");
 
-    // only accept a single quic connection
+    // Create a channel for the global Ctrl-C handler
+    let (global_shutdown_tx, mut global_shutdown_rx) = channel::<()>(1);
+
+    // Spawn a global Ctrl-C handler
+    let global_shutdown_tx_clone = global_shutdown_tx.clone();
+    tokio::spawn(async move {
+        if let Ok(_) = tokio::signal::ctrl_c().await {
+            log::info!("Received Ctrl-C signal, initiating shutdown...");
+            let _ = global_shutdown_tx_clone.send(()).await;
+        }
+    });
+
     loop {
         let (close_channel_entry_sender, mut close_channel_entry_receiver) =
             channel::<CloseAction>(1);
 
         let mut quic_conn = tokio::select! {
-
             Some(qc) = quic_srv.accept() => qc,
-            _ = close_channel_entry_receiver.recv() => {
-
-                break;
-
+            _ = close_channel_entry_receiver.recv() => break,
+            _ = global_shutdown_rx.recv() => {
+                log::info!("Global shutdown signal received, exiting...");
+                return Ok(());
             }
-
         };
 
         let local_address = quic_conn.remote_addr().unwrap();
@@ -58,42 +72,35 @@ pub async fn reverse_remote(
             let (close_channel_tcpwait_sender, mut close_channel_tcpwait_receiver) =
                 mpsc::channel::<CloseAction>(1);
 
+            let global_shutdown_tx_stream = global_shutdown_tx.clone();
             tokio::spawn(handle_command_stream(
                 quic_stream,
-                close_channel_tcpwait_sender,
-                close_channel_entry_sender,
+                close_channel_tcpwait_sender.clone(),
+                close_channel_entry_sender.clone(),
+                global_shutdown_tx_stream,
             ));
-
-            // handle tcp stream
 
             loop {
                 let (tcp_stream, tcp_addr) = tokio::select! {
-
-                    Ok(res) = tcp_srv.accept() => {
-
-                        res
-
-                    },
-
-                    Some(close_action) = close_channel_tcpwait_receiver.recv() =>
-
+                    Ok(res) = tcp_srv.accept() => res,
+                    Some(close_action) = close_channel_tcpwait_receiver.recv() => {
                         match close_action {
-
                             CloseAction::CloseProcess => {
-
-                                log::info!("Ctrl-C, exiting...");
+                                log::info!("Received close process signal, exiting...");
                                 return Ok(());
-
                             },
                             CloseAction::CloseStream => {
-
+                                log::info!("Client disconnected, accepting new connections...");
                                 break;
-
                             }
-
+                        }
+                    },
+                    _ = global_shutdown_rx.recv() => {
+                        log::info!("Global shutdown signal received in TCP accept loop, exiting...");
+                        return Ok(());
                     }
-
                 };
+
                 log::info!("Stream received from {tcp_addr}");
 
                 let quic_data_stream = match quic_conn.open_bidirectional_stream().await {
@@ -127,51 +134,40 @@ pub async fn reverse_remote(
     Ok(())
 }
 
-enum CloseAction {
-    CloseProcess,
-    CloseStream,
-}
-
 async fn handle_command_stream(
     command_stream: BidirectionalStream,
     close_tcpwait_sender: Sender<CloseAction>,
     close_entry_sender: Sender<CloseAction>,
+    global_shutdown_tx: Sender<()>,
 ) {
     let (mut receiver, sender) = command_stream.split();
-
     let sender_arc = Arc::new(Mutex::new(sender));
     let sender_arc_c = sender_arc.clone();
-
     let close_tcpwait_sender_c = close_tcpwait_sender.clone();
+    let global_shutdown_tx_c = global_shutdown_tx.clone();
 
     tokio::spawn(async move {
-        while let Ok(_) = tokio::signal::ctrl_c().await {
+        if let Ok(_) = tokio::signal::ctrl_c().await {
             let mut guard = sender_arc_c.lock().await;
 
-            if let Err(e) = guard.send(proto::ProtoCommand::CLOSED.deserialize()).await {
-                log::warn!("Could not send CLOSED to local reverse tunnel instance:  {e}");
-            }
+            let _ = guard.send(proto::ProtoCommand::CLOSED.deserialize()).await;
 
+            let _ = guard.flush().await;
             drop(guard);
 
-            close_tcpwait_sender_c
-                .send(CloseAction::CloseProcess)
-                .await
-                .unwrap();
-
-            close_entry_sender
-                .send(CloseAction::CloseProcess)
-                .await
-                .unwrap();
+            let _ = close_tcpwait_sender_c.send(CloseAction::CloseProcess).await;
+            let _ = close_entry_sender.send(CloseAction::CloseProcess).await;
+            let _ = global_shutdown_tx_c.send(()).await;
         }
     });
 
     while let Ok(Some(cmd_data)) = receiver.receive().await {
-        log::info!("Received close from client");
+        log::info!("Received command from client");
 
         let cmd = match proto::ProtoCommand::serialize(cmd_data) {
             Some(cmd) => cmd,
             None => {
+                log::warn!("Received invalid command data");
                 continue;
             }
         };
@@ -182,19 +178,21 @@ async fn handle_command_stream(
 
                 let mut guard = sender_arc.lock().await;
 
-                guard
-                    .send(proto::ProtoCommand::ACK.deserialize())
-                    .await
-                    .unwrap();
+                if let Err(e) = guard.send(proto::ProtoCommand::ACK.deserialize()).await {
+                    log::warn!("Failed to send ACK: {e}");
+                }
 
                 drop(guard);
 
-                close_tcpwait_sender
-                    .send(CloseAction::CloseStream)
-                    .await
-                    .unwrap();
+                if let Err(e) = close_tcpwait_sender.send(CloseAction::CloseStream).await {
+                    log::warn!("Failed to send CloseStream action: {e}");
+                }
+
+                break;
             }
-            _ => {}
+            _ => {
+                log::debug!("Received unhandled command");
+            }
         }
     }
 }
