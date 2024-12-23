@@ -1,6 +1,6 @@
 pub const DEFAULT_BUFSIZE: usize = 1024 * 32;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone)]
 pub enum TunnelType {
     Forward,
     Reverse,

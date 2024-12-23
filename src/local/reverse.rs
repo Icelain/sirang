@@ -1,101 +1,122 @@
-use s2n_quic::stream::BidirectionalStream;
-use std::error::Error;
-use tokio::{
-    net::TcpStream,
-    sync::mpsc::{channel, Sender},
-};
-
+use super::config::LocalConfig;
 use crate::{
     common::proto::{self, ProtoCommand},
     errors::GenericError,
     quic,
 };
-
-use super::config::LocalConfig;
+use bytes::Bytes;
+use s2n_quic::stream::BidirectionalStream;
+use std::error::Error;
+use std::net::SocketAddr;
+use tokio::{
+    net::TcpStream,
+    sync::mpsc::{channel, Sender},
+};
 
 pub async fn reverse_local(
     config: LocalConfig,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let mut quic_client =
-        quic::new_quic_connection(config.remote_quic_server_addr, &config.tls_cert).await?;
-    quic_client.keep_alive(true)?;
-
-    log::info!("Connected to remote quic server");
-
+    let mut quic_client = setup_quic_connection(&config).await?;
     let mut command_stream = quic_client.open_bidirectional_stream().await?;
 
-    let handshake_data = match command_stream.receive().await {
-        Ok(Some(data)) => data,
-        Err(_) | Ok(None) => {
-            return Err(Box::new(GenericError(
-                "Unable to receive handshake data".to_string(),
-            )));
-        }
-    };
-
-    let cmd = match proto::ProtoCommand::serialize(handshake_data) {
-        Some(cmd) => cmd,
-        None => {
-            return Err(Box::new(GenericError(
-                "Unable to serialize handshake data".to_string(),
-            )));
-        }
-    };
-
-    log::info!("Handshake complete");
-
-    let remote_tcp_address = match cmd {
-        ProtoCommand::CONNECTED(socket_addr) => socket_addr,
-        _ => {
-            return Err(Box::new(GenericError(
-                "Invalid command from remote instance".to_string(),
-            )));
-        }
-    };
+    let remote_tcp_address = perform_handshake(&mut command_stream).await?;
+    println!("Access from {remote_tcp_address}");
 
     let (close_channel_sender, mut close_channel_receiver) = channel::<()>(1);
     tokio::spawn(handle_command_stream(command_stream, close_channel_sender));
 
-    // should be printed whether logging is on or off
-    println!("Listening on {remote_tcp_address}");
-
     loop {
         let server_created_quic_bd_stream = tokio::select! {
-
-            bd_stream = quic_client.accept_bidirectional_stream() => match bd_stream?{
+            bd_stream = quic_client.accept_bidirectional_stream() => match bd_stream? {
                 Some(s) => s,
-                None => {
-                    break;
-                }
+                None => break,
             },
-            _ = close_channel_receiver.recv() => {
-
-                break;
-
-            }
-
+            _ = close_channel_receiver.recv() => break,
         };
 
-        let tcp_stream = TcpStream::connect(config.local_tcp_server_addr).await?;
-
-        let buffer_size = config.buffer_size;
-
-        tokio::spawn(async move {
-            let mut quic_stream_c = server_created_quic_bd_stream;
-            let mut tcp_stream_c = tcp_stream;
-
-            if let Err(e) = tokio::io::copy_bidirectional_with_sizes(
-                &mut tcp_stream_c,
-                &mut quic_stream_c,
-                buffer_size,
-                buffer_size,
-            )
-            .await
-            {
-                log::info!("Error while bidirectional copy: {e}");
-            }
-        });
+        spawn_tunnel_handler(
+            server_created_quic_bd_stream,
+            config.local_tcp_server_addr,
+            config.buffer_size,
+        );
     }
+    Ok(())
+}
+
+async fn setup_quic_connection(
+    config: &LocalConfig,
+) -> Result<s2n_quic::connection::Connection, Box<dyn Error + Send + Sync + 'static>> {
+    let mut quic_client =
+        quic::new_quic_connection(config.remote_quic_server_addr, &config.tls_cert).await?;
+    quic_client.keep_alive(true)?;
+    log::info!("Connected to remote quic server");
+    Ok(quic_client)
+}
+
+async fn perform_handshake(
+    command_stream: &mut BidirectionalStream,
+) -> Result<SocketAddr, Box<dyn Error + Send + Sync + 'static>> {
+    let handshake_data = receive_handshake_data(command_stream).await?;
+    let cmd = serialize_handshake_command(handshake_data)?;
+
+    log::info!("Handshake complete");
+
+    match cmd {
+        ProtoCommand::CONNECTED(socket_addr) => Ok(socket_addr),
+        _ => Err(Box::new(GenericError(
+            "Invalid command from remote instance".to_string(),
+        ))),
+    }
+}
+
+async fn receive_handshake_data(
+    command_stream: &mut BidirectionalStream,
+) -> Result<Bytes, Box<dyn Error + Send + Sync + 'static>> {
+    match command_stream.receive().await {
+        Ok(Some(data)) => Ok(data),
+        Err(_) | Ok(None) => Err(Box::new(GenericError(
+            "Unable to receive handshake data".to_string(),
+        ))),
+    }
+}
+
+fn serialize_handshake_command(
+    data: Bytes,
+) -> Result<ProtoCommand, Box<dyn Error + Send + Sync + 'static>> {
+    proto::ProtoCommand::serialize(data).ok_or_else(|| {
+        let err: Box<dyn Error + Send + Sync + 'static> = Box::new(GenericError(
+            "Unable to deserialize handshake data".to_string(),
+        ));
+        err
+    })
+}
+
+fn spawn_tunnel_handler(
+    quic_stream: BidirectionalStream,
+    tcp_addr: SocketAddr,
+    buffer_size: usize,
+) {
+    tokio::spawn(async move {
+        if let Err(e) = handle_single_tunnel(quic_stream, tcp_addr, buffer_size).await {
+            log::info!("Error while bidirectional copy: {e}");
+        }
+    });
+}
+
+async fn handle_single_tunnel(
+    mut quic_stream: BidirectionalStream,
+    tcp_addr: SocketAddr,
+    buffer_size: usize,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    let mut tcp_stream = TcpStream::connect(tcp_addr).await?;
+
+    tokio::io::copy_bidirectional_with_sizes(
+        &mut tcp_stream,
+        &mut quic_stream,
+        buffer_size,
+        buffer_size,
+    )
+    .await?;
 
     Ok(())
 }
@@ -115,25 +136,20 @@ async fn handle_command_stream(
     });
 
     while let Ok(Some(cmd_data)) = receiver.receive().await {
-        let cmd = match proto::ProtoCommand::serialize(cmd_data) {
-            Some(cmd) => cmd,
-            None => {
-                continue;
+        if let Some(cmd) = proto::ProtoCommand::serialize(cmd_data) {
+            match cmd {
+                ProtoCommand::CLOSED => {
+                    log::info!("Remote tunnel instance has closed the connection");
+                    close_channel_sender.send(()).await.unwrap();
+                    break;
+                }
+                ProtoCommand::ACK => {
+                    log::info!("Closing local instance");
+                    close_channel_sender.send(()).await.unwrap();
+                    break;
+                }
+                _ => {}
             }
-        };
-
-        match cmd {
-            ProtoCommand::CLOSED => {
-                log::info!("Remote tunnel instance has closed the connection");
-                close_channel_sender.send(()).await.unwrap();
-                break;
-            }
-            ProtoCommand::ACK => {
-                log::info!("Closing local instance");
-                close_channel_sender.send(()).await.unwrap();
-                break;
-            }
-            _ => {}
         }
     }
 }

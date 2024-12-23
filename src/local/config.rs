@@ -1,6 +1,7 @@
 use crate::common::{TunnelType, DEFAULT_BUFSIZE};
 use std::{net::SocketAddr, str::FromStr};
 
+#[derive(Clone)]
 pub struct LocalConfig {
     pub tunnel_type: TunnelType,
     pub local_tcp_server_addr: SocketAddr,

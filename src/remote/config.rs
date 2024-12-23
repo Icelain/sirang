@@ -2,6 +2,7 @@ use std::{net::SocketAddr, str::FromStr};
 
 use crate::common::{TunnelType, DEFAULT_BUFSIZE};
 
+#[derive(Clone)]
 pub struct RemoteConfig {
     pub tunnel_type: TunnelType,
 
