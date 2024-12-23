@@ -1,6 +1,8 @@
 # An Experimental TCP Tunnel over QUIC
 
-## Build
+## Install
+Install through cargo with ```cargo install sirang``` <br>
+### OR <br>
 Clone the repo and compile with ```cargo build --release```
 
 ## Running a Forward Tunnel
@@ -24,11 +26,6 @@ Here, ```--cert``` is the tls certificate of the remote server and ```--remotead
 By default, the local tcp server starts on `127.0.0.1:8080`.
 To change this, you can specify the optional argument ```--localaddr``` to start the tcp server on your preferred address.
 
-### General:
-
-To turn on debug logging, use ```--debug``` before either command. <br/>
-To set the buffer size(in bytes), use ```--buffersize``` before either command. The default buffer size is 32KB.
-
 ## Running a Reverse Tunnel
 
 ### On your remote server:
@@ -48,7 +45,7 @@ Here, ```--cert``` is the tls certificate of the remote server and ```--remotead
 
 The argument ```--localaddr``` specifies the local tcp server you want to tunnel to.
 
-### General Options:
+## General Options:
 
 To turn on debug logging, use ```--debug``` before either command. <br/>
 To set the buffer size(in bytes), use ```--buffersize``` before either command. The default buffer size is 32KB.
