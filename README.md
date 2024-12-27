@@ -54,4 +54,4 @@ To set the buffer size(in bytes), use ```--buffersize``` before either command. 
 
 - [x] Functionality
 - [x] Debug Logging
-- [ ] Testing(WIP)
+- [x] Testing
