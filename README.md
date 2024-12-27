@@ -3,6 +3,10 @@
 ## Install
 Install through cargo with ```cargo install sirang``` <br>
 ### OR <br>
+
+Install from [Github Releases](https://github.com/Icelain/sirang/releases)
+
+### OR <br>
 Clone the repo and compile with ```cargo build --release```
 
 ## Running a Forward Tunnel
