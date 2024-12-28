@@ -7,6 +7,7 @@ pub async fn execute() {
     let matches = command!()
         .subcommand(
             Command::new("forward")
+            .arg_required_else_help(true)
             .about("Starts a forward tunnel instance")
                 .subcommand(
                     Command::new("remote")
@@ -102,6 +103,7 @@ pub async fn execute() {
         )
          .subcommand(
             Command::new("reverse")
+            .arg_required_else_help(true)
             .about("Starts a reverse tunnel instance")
                 .subcommand(
                     Command::new("remote")
@@ -195,6 +197,7 @@ pub async fn execute() {
                     .value_parser(value_parser!(usize))
                 )        
         )
+        .arg_required_else_help(true)
         .get_matches();
 
     if let Err(e) = handle_matches(matches).await {
