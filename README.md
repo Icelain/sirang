@@ -4,7 +4,7 @@
 Install through cargo with ```cargo install sirang``` <br>
 ### OR <br>
 
-Install from [Github Releases](https://github.com/Icelain/sirang/releases)
+Install from the [Github Releases](https://github.com/Icelain/sirang/releases) page
 
 ### OR <br>
 Clone the repo and compile with ```cargo build --release```
