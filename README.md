@@ -56,6 +56,6 @@ To set the buffer size(in bytes), use ```--buffersize``` before either command. 
 
 ## Progress
 
-- [x] Functionality
-- [x] Debug Logging
-- [x] Testing
+- [X] Functionality
+- [X] Debug Logging
+- [X] Testing
