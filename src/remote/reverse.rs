@@ -38,6 +38,11 @@ async fn setup_quic_server(
         quic::new_quic_server(config.quic_address, &config.tls_cert, &config.tls_key).await?;
 
     log::info!("Quic Server started on: {}", config.quic_address);
+    log::info!(
+        "Tcp Server listening on: {}",
+        config.tcp_reverse_address.unwrap()
+    );
+
     Ok(quic_srv)
 }
 
