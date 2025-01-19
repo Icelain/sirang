@@ -80,7 +80,7 @@ async fn handle_connections(
         };
 
         if let Ok(client_address) = quic_conn.remote_addr() {
-            log::info!("QUIC connection established with: {client_address}");
+            log::debug!("QUIC connection established with: {client_address}");
             handle_quic_connection(
                 &mut quic_conn,
                 config.clone(),
@@ -168,7 +168,7 @@ async fn handle_tcp_connections(
                         return Ok(());
                     },
                     CloseAction::CloseStream => {
-                        log::info!("Client disconnected, accepting new connections...");
+                        log::debug!("Client disconnected, accepting new connections...");
                         break;
                     }
                 }
@@ -218,7 +218,7 @@ async fn handle_stream_copy(
     )
     .await
     {
-        log::info!("Error during bidirectional copy: {e}");
+        log::warn!("Error during bidirectional copy: {e}");
     }
 }
 
@@ -281,7 +281,7 @@ async fn handle_command_receiver(
     close_tcpwait_sender: Sender<CloseAction>,
 ) {
     while let Ok(Some(cmd_data)) = receiver.receive().await {
-        log::info!("Received command from client");
+        log::debug!("Received command from client");
 
         let cmd = match proto::ProtoCommand::serialize(cmd_data) {
             Some(cmd) => cmd,
@@ -292,7 +292,7 @@ async fn handle_command_receiver(
         };
 
         if let proto::ProtoCommand::CLOSED = cmd {
-            log::info!("Local tunnel instance has closed the connection");
+            log::debug!("Local tunnel instance has closed the connection");
             send_ack_and_close(sender_arc, close_tcpwait_sender).await;
             break;
         } else {

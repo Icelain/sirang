@@ -59,7 +59,7 @@ async fn handle_stream(
     tcp_forward_addr: SocketAddr,
     buffer_size: usize,
 ) {
-    log::info!("Stream received from {remote_quic_addr}");
+    log::debug!("Stream received from {remote_quic_addr}");
 
     let tcp_stream = match TcpStream::connect(tcp_forward_addr).await {
         Ok(stream) => stream,

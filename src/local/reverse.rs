@@ -19,8 +19,12 @@ pub async fn reverse_local(
     let mut quic_client = setup_quic_connection(&config).await?;
     let mut command_stream = quic_client.open_bidirectional_stream().await?;
 
-    let remote_tcp_address = perform_handshake(&mut command_stream).await?;
-    println!("Access from {remote_tcp_address}");
+    let remote_tcp_address_port = perform_handshake(&mut command_stream).await?;
+    log::info!(
+        "Access from {}:{}",
+        config.remote_quic_server_addr.ip(),
+        remote_tcp_address_port
+    );
 
     let (close_channel_sender, mut close_channel_receiver) = channel::<()>(1);
     tokio::spawn(handle_command_stream(command_stream, close_channel_sender));
@@ -49,20 +53,20 @@ async fn setup_quic_connection(
     let mut quic_client =
         quic::new_quic_connection(config.remote_quic_server_addr, &config.tls_cert).await?;
     quic_client.keep_alive(true)?;
-    log::info!("Connected to remote quic server");
+    log::debug!("Connected to remote quic server");
     Ok(quic_client)
 }
 
 async fn perform_handshake(
     command_stream: &mut BidirectionalStream,
-) -> Result<SocketAddr, Box<dyn Error + Send + Sync + 'static>> {
+) -> Result<u16, Box<dyn Error + Send + Sync + 'static>> {
     let handshake_data = receive_handshake_data(command_stream).await?;
     let cmd = serialize_handshake_command(handshake_data)?;
 
-    log::info!("Handshake complete");
+    log::debug!("Handshake complete");
 
     match cmd {
-        ProtoCommand::CONNECTED(socket_addr) => Ok(socket_addr),
+        ProtoCommand::CONNECTED(socket_addr) => Ok(socket_addr.port()),
         _ => Err(Box::new(GenericError(
             "Invalid command from remote instance".to_string(),
         ))),
@@ -98,7 +102,7 @@ fn spawn_tunnel_handler(
 ) {
     tokio::spawn(async move {
         if let Err(e) = handle_single_tunnel(quic_stream, tcp_addr, buffer_size).await {
-            log::info!("Error while bidirectional copy: {e}");
+            log::debug!("Error while bidirectional copy: {e}");
         }
     });
 }

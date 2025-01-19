@@ -231,7 +231,11 @@ async fn handle_matches(
     let mut log_builder = colog::default_builder();
 
     if !cmd_matches.get_flag("debug") {
-        log_builder.filter_level(log::LevelFilter::Off);
+        log_builder.filter_level(log::LevelFilter::Info);
+    } else {
+        
+        log_builder.filter_level(log::LevelFilter::Trace);
+
     }
 
     log_builder.init();
