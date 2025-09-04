@@ -21,19 +21,19 @@ pub mod proto {
 
     impl ProtoCommand {
         pub fn deserialize(&self) -> Bytes {
-            match self {
-                &ProtoCommand::CONNECTED(socket_addr) => {
-                    return Bytes::copy_from_slice(
+            match *self {
+                ProtoCommand::CONNECTED(socket_addr) => {
+                    Bytes::copy_from_slice(
                         [b"CONNECTED ", socket_addr.to_string().as_bytes()]
                             .concat()
                             .as_slice(),
-                    );
+                    )
                 }
-                &ProtoCommand::CLOSED => {
-                    return Bytes::from_static(b"CLOSED");
+                ProtoCommand::CLOSED => {
+                    Bytes::from_static(b"CLOSED")
                 }
-                &ProtoCommand::ACK => {
-                    return Bytes::from_static(b"ACK");
+                ProtoCommand::ACK => {
+                    Bytes::from_static(b"ACK")
                 }
             }
         }

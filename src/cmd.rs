@@ -249,11 +249,8 @@ async fn handle_matches(
             if let Some(tcp_addr) = remote_matches.get_one::<SocketAddr>("tcpaddr") {
                 remote_config.tcp_reverse_address = Some(*tcp_addr);
             }
-        } else {
-             if let Some(forward_addr) = remote_matches.get_one::<SocketAddr>("forwardaddr") {
-                remote_config.tcp_forward_address = Some(*forward_addr);
-            }       
-
+        } else if let Some(forward_addr) = remote_matches.get_one::<SocketAddr>("forwardaddr") {
+            remote_config.tcp_forward_address = Some(*forward_addr);
         }
 
         if let Some(addr) = remote_matches.get_one::<SocketAddr>("quicaddr") {
@@ -277,7 +274,7 @@ async fn handle_matches(
             }
 
             remote_config.tls_key =
-                std::fs::read_to_string(tls_key_file.to_str().unwrap().to_string())?;
+                std::fs::read_to_string(tls_key_file.to_str().unwrap())?;
         }
 
         if let Some(buffer_size) = buffersize {
@@ -304,7 +301,7 @@ async fn handle_matches(
             }
 
             local_config.tls_cert =
-                std::fs::read_to_string(tls_cert_file.to_str().unwrap().to_string())?;
+                std::fs::read_to_string(tls_cert_file.to_str().unwrap())?;
         }
 
         if let Some(buffer_size) = buffersize {
