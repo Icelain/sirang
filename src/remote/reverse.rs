@@ -51,7 +51,7 @@ fn setup_global_shutdown() -> (Sender<()>, mpsc::Receiver<()>) {
     let global_shutdown_tx_clone = global_shutdown_tx.clone();
 
     tokio::spawn(async move {
-        if let Ok(_) = tokio::signal::ctrl_c().await {
+        if tokio::signal::ctrl_c().await.is_ok() {
             log::info!("Received Ctrl-C signal, initiating shutdown...");
             let _ = global_shutdown_tx_clone.send(()).await;
         }
@@ -262,7 +262,7 @@ fn spawn_ctrl_c_handler(
     global_shutdown_tx: Sender<()>,
 ) {
     tokio::spawn(async move {
-        if let Ok(_) = tokio::signal::ctrl_c().await {
+        if tokio::signal::ctrl_c().await.is_ok() {
             let mut guard = sender_arc.lock().await;
             let _ = guard.send(proto::ProtoCommand::CLOSED.deserialize()).await;
             let _ = guard.flush().await;
