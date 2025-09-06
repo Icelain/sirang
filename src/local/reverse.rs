@@ -132,7 +132,7 @@ async fn handle_command_stream(
     let (mut receiver, mut sender) = command_stream.split();
 
     tokio::spawn(async move {
-        if let Ok(_) = tokio::signal::ctrl_c().await {
+        if tokio::signal::ctrl_c().await.is_ok() {
             if let Err(e) = sender.send(ProtoCommand::CLOSED.deserialize()).await {
                 log::warn!("Could not send CLOSED to remote reverse tunnel instance: {e}");
             }
