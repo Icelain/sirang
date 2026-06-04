@@ -21,15 +21,16 @@ mod quic_tests {
         let new_conn_result = new_quic_connection(
             server.local_addr().unwrap(),
             include_str!(".././test_cert.pem"),
+            "localhost",
         )
         .await;
-        assert_eq!(new_conn_result.is_ok(), true);
+        assert!(new_conn_result.is_ok());
     }
 
     #[tokio::test]
     async fn test_create_new_quic_server() {
         let socket_addr_result = SocketAddr::from_str("127.0.0.1:0");
-        assert_eq!(socket_addr_result.is_ok(), true);
+        assert!(socket_addr_result.is_ok());
         let socket_addr = socket_addr_result.unwrap();
 
         let new_server_result = new_quic_server(
@@ -38,7 +39,7 @@ mod quic_tests {
             include_str!(".././test_key.pem"),
         )
         .await;
-        assert_eq!(new_server_result.is_ok(), true);
+        assert!(new_server_result.is_ok());
     }
 
     #[tokio::test]
@@ -54,51 +55,68 @@ mod quic_tests {
         let mut client_conn = new_quic_connection(
             server.local_addr().unwrap(),
             include_str!(".././test_cert.pem"),
+            "localhost",
         )
         .await
         .unwrap();
-        assert_eq!(client_conn.keep_alive(true).is_ok(), true);
+        assert!(client_conn.keep_alive(true).is_ok());
 
         tokio::spawn(async move {
             let conn_result = server.accept().await;
-            assert_eq!(conn_result.is_some(), true);
+            assert!(conn_result.is_some());
 
             let mut conn = conn_result.unwrap();
 
             let bdstream_result = conn.accept_bidirectional_stream().await;
-            assert_eq!(bdstream_result.is_ok(), true);
+            assert!(bdstream_result.is_ok());
 
             let bdstream_option = bdstream_result.unwrap();
-            assert_eq!(bdstream_option.is_some(), true);
+            assert!(bdstream_option.is_some());
 
             let mut bdstream = bdstream_option.unwrap();
 
             let recv_data_result = bdstream.receive().await;
-            assert_eq!(recv_data_result.is_ok(), true);
+            assert!(recv_data_result.is_ok());
 
             let recv_data_option = recv_data_result.unwrap();
-            assert_eq!(recv_data_option.is_some(), true);
+            assert!(recv_data_option.is_some());
 
             let client_cmd_res = ProtoCommand::serialize(recv_data_option.unwrap());
-            assert_eq!(client_cmd_res.is_some(), true);
+            assert!(client_cmd_res.is_some());
 
-            assert_eq!(
-                bdstream.send(ProtoCommand::ACK.deserialize()).await.is_ok(),
-                true
-            );
+            assert!(bdstream.send(ProtoCommand::ACK.deserialize()).await.is_ok());
 
             conn.close(6u32.into());
         });
 
         let bdstream_result = client_conn.open_bidirectional_stream().await;
-        assert_eq!(bdstream_result.is_ok(), true);
+        assert!(bdstream_result.is_ok());
         let mut bdstream = bdstream_result.unwrap();
 
-        assert_eq!(
-            bdstream.send(ProtoCommand::ACK.deserialize()).await.is_ok(),
-            true
-        );
+        assert!(bdstream
+            .send(ProtoCommand::ACK.deserialize())
+            .await
+            .is_ok());
 
         client_conn.close(6u32.into());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_and_connect_via_hostname() {
+        let server = new_quic_server(
+            SocketAddr::from_str("127.0.0.1:0").unwrap(),
+            include_str!(".././test_cert.pem"),
+            include_str!(".././test_key.pem"),
+        )
+        .await
+        .unwrap();
+
+        let port = server.local_addr().unwrap().port();
+        let (_host, _p, addr) = sirang::quic::resolve_host_port(&format!("localhost:{port}"))
+            .await
+            .unwrap();
+
+        let conn = new_quic_connection(addr, include_str!(".././test_cert.pem"), "localhost").await;
+        assert!(conn.is_ok());
     }
 }

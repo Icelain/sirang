@@ -50,10 +50,23 @@ pub async fn reverse_local(
 async fn setup_quic_connection(
     config: &LocalConfig,
 ) -> Result<s2n_quic::connection::Connection, Box<dyn Error + Send + Sync + 'static>> {
-    let mut quic_client =
-        quic::new_quic_connection(config.remote_quic_server_addr, &config.tls_cert).await?;
+    let server_name = if config.remote_host.is_empty() {
+        config.remote_quic_server_addr.ip().to_string()
+    } else {
+        config.remote_host.clone()
+    };
+    let mut quic_client = quic::new_quic_connection(
+        config.remote_quic_server_addr,
+        &config.tls_cert,
+        &server_name,
+    )
+    .await?;
     quic_client.keep_alive(true)?;
-    log::debug!("Connected to remote quic server");
+    log::debug!(
+        "Connected to remote quic server {} ({})",
+        server_name,
+        config.remote_quic_server_addr
+    );
     Ok(quic_client)
 }
 

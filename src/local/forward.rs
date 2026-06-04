@@ -20,13 +20,23 @@ pub async fn forward_local(
 async fn setup_quic_connection(
     local_config: &config::LocalConfig,
 ) -> Result<Connection, Box<dyn Error + Send + Sync + 'static>> {
-    let mut quic_conn =
-        quic::new_quic_connection(local_config.remote_quic_server_addr, &local_config.tls_cert)
-            .await?;
+    let server_name = if local_config.remote_host.is_empty() {
+        local_config.remote_quic_server_addr.ip().to_string()
+    } else {
+        local_config.remote_host.clone()
+    };
+    let mut quic_conn = quic::new_quic_connection(
+        local_config.remote_quic_server_addr,
+        &local_config.tls_cert,
+        &server_name,
+    )
+    .await?;
 
     quic_conn.keep_alive(true)?;
     log::info!(
-        "Quic connection established with remote server with buffer Size: {}",
+        "Quic connection established with {} ({}) buffer size: {}",
+        server_name,
+        local_config.remote_quic_server_addr,
         local_config.buffer_size
     );
 

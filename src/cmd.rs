@@ -74,11 +74,10 @@ pub async fn execute() {
                         .arg(
                             arg!(
 
-                                -r --remoteaddr <ADDRESS> "Address of the remote quic instance to connect to"
+                                -r --remoteaddr <ADDRESS> "Address of the remote quic instance (host:port, DNS supported)"
 
                             )
-                            .required(true)
-                            .value_parser(value_parser!(SocketAddr)),
+                            .required(true),
                         )
 
                 )
@@ -170,11 +169,10 @@ pub async fn execute() {
                         .arg(
                             arg!(
 
-                                -r --remoteaddr <ADDRESS> "Address of the remote quic instance to connect to"
+                                -r --remoteaddr <ADDRESS> "Address of the remote quic instance (host:port, DNS supported)"
 
                             )
-                            .required(true)
-                            .value_parser(value_parser!(SocketAddr)),
+                            .required(true),
                         )
 
                 )
@@ -290,8 +288,10 @@ async fn handle_matches(
         if let Some(local_addr) = local_matches.get_one::<SocketAddr>("localaddr") {
             local_config.local_tcp_server_addr = *local_addr;
         }
-        if let Some(remote_addr) = local_matches.get_one::<SocketAddr>("remoteaddr") {
-            local_config.remote_quic_server_addr = *remote_addr;
+        if let Some(remote_host_port) = local_matches.get_one::<String>("remoteaddr") {
+            let (host, _port, addr) = crate::quic::resolve_host_port(remote_host_port).await?;
+            local_config.remote_host = host;
+            local_config.remote_quic_server_addr = addr;
         }
         if let Some(tls_cert_file) = local_matches.get_one::<PathBuf>("cert") {
             if !tls_cert_file.exists() {
