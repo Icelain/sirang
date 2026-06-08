@@ -56,15 +56,6 @@ pub async fn execute() {
                         .arg(
                             arg!(
 
-                                -c --cert <PATH> "Path to the tls certificate file"
-
-                            )
-                            .required(true)
-                            .value_parser(value_parser!(PathBuf)),
-                        )
-                        .arg(
-                            arg!(
-
                                 -l --localaddr <ADDRESS> "Address to run the local tcp forwarding server on"
 
                             )
@@ -148,15 +139,6 @@ pub async fn execute() {
                 .subcommand(
                     Command::new("local")
                         .about("Starts the local tcp forwarding server for the reverse tunnel instance")
-                        .arg(
-                            arg!(
-
-                                -c --cert <PATH> "Path to the tls certificate file"
-
-                            )
-                            .required(true)
-                            .value_parser(value_parser!(PathBuf)),
-                        )
                         .arg(
                             arg!(
 
@@ -293,16 +275,8 @@ async fn handle_matches(
             local_config.remote_host = host;
             local_config.remote_quic_server_addr = addr;
         }
-        if let Some(tls_cert_file) = local_matches.get_one::<PathBuf>("cert") {
-            if !tls_cert_file.exists() {
-                return Err(Box::new(errors::GenericError(
-                    "Tls certificate file doesn't exist".to_string(),
-                )));
-            }
-
-            local_config.tls_cert =
-                std::fs::read_to_string(tls_cert_file.to_str().unwrap())?;
-        }
+        // Certificate is fetched automatically from the remote on first connect.
+        local_config.tls_cert = String::new();
 
         if let Some(buffer_size) = buffersize {
             local_config.buffer_size = *buffer_size;

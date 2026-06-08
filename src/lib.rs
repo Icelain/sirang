@@ -1,3 +1,4 @@
+pub mod cert;
 pub mod cmd;
 pub mod common;
 pub mod errors;

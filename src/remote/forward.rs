@@ -1,5 +1,5 @@
 use super::config::RemoteConfig;
-use crate::quic;
+use crate::{cert, quic};
 use std::error::Error;
 use std::net::SocketAddr;
 use tokio::net::TcpStream;
@@ -7,6 +7,7 @@ use tokio::net::TcpStream;
 pub async fn forward_remote(
     config: RemoteConfig,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    cert::serve_cert(config.cert_listen_addr(), config.tls_cert.clone()).await?;
     let server = setup_quic_server(&config).await?;
 
     handle_incoming_connections(server, config).await

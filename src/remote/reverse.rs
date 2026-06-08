@@ -1,5 +1,5 @@
 use super::config::RemoteConfig;
-use crate::{common::proto, quic};
+use crate::{cert, common::proto, quic};
 use s2n_quic::stream::BidirectionalStream;
 use std::{error::Error, sync::Arc};
 use tokio::{
@@ -19,6 +19,7 @@ enum CloseAction {
 pub async fn reverse_remote(
     config: RemoteConfig,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    cert::serve_cert(config.cert_listen_addr(), config.tls_cert.clone()).await?;
     let mut quic_srv = setup_quic_server(&config).await?;
     let (global_shutdown_tx, mut global_shutdown_rx) = setup_global_shutdown();
 

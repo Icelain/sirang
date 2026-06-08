@@ -1,5 +1,6 @@
 use super::config::LocalConfig;
 use crate::{
+    cert,
     common::proto::{self, ProtoCommand},
     errors::GenericError,
     quic,
@@ -14,16 +15,17 @@ use tokio::{
 };
 
 pub async fn reverse_local(
-    config: LocalConfig,
+    mut config: LocalConfig,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    ensure_tls_cert(&mut config).await?;
     let mut quic_client = setup_quic_connection(&config).await?;
     let mut command_stream = quic_client.open_bidirectional_stream().await?;
 
-    let remote_tcp_address_port = perform_handshake(&mut command_stream).await?;
+    let remote_tcp_address = perform_handshake(&mut command_stream).await?;
     log::info!(
-        "Access from {}:{}",
-        config.remote_quic_server_addr.ip(),
-        remote_tcp_address_port
+        "Access this tunnel at {} (via remote {})",
+        remote_tcp_address,
+        config.remote_host
     );
 
     let (close_channel_sender, mut close_channel_receiver) = channel::<()>(1);
@@ -47,24 +49,40 @@ pub async fn reverse_local(
     Ok(())
 }
 
+async fn ensure_tls_cert(
+    config: &mut LocalConfig,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    if !config.tls_cert.is_empty() {
+        return Ok(());
+    }
+
+    let cache_path = config.cert_cache_path.clone().unwrap_or_else(|| {
+        cert::cert_cache_path(&config.remote_host, config.remote_quic_server_addr.port())
+    });
+
+    config.tls_cert = cert::load_or_fetch_cert(
+        &config.remote_host,
+        config.remote_quic_server_addr,
+        &cache_path,
+    )
+    .await?;
+
+    Ok(())
+}
+
 async fn setup_quic_connection(
     config: &LocalConfig,
 ) -> Result<s2n_quic::connection::Connection, Box<dyn Error + Send + Sync + 'static>> {
-    let server_name = if config.remote_host.is_empty() {
-        config.remote_quic_server_addr.ip().to_string()
-    } else {
-        config.remote_host.clone()
-    };
     let mut quic_client = quic::new_quic_connection(
         config.remote_quic_server_addr,
         &config.tls_cert,
-        &server_name,
+        &config.remote_host,
     )
     .await?;
     quic_client.keep_alive(true)?;
     log::debug!(
         "Connected to remote quic server {} ({})",
-        server_name,
+        config.remote_host,
         config.remote_quic_server_addr
     );
     Ok(quic_client)
@@ -72,14 +90,14 @@ async fn setup_quic_connection(
 
 async fn perform_handshake(
     command_stream: &mut BidirectionalStream,
-) -> Result<u16, Box<dyn Error + Send + Sync + 'static>> {
+) -> Result<SocketAddr, Box<dyn Error + Send + Sync + 'static>> {
     let handshake_data = receive_handshake_data(command_stream).await?;
     let cmd = serialize_handshake_command(handshake_data)?;
 
     log::debug!("Handshake complete");
 
     match cmd {
-        ProtoCommand::CONNECTED(socket_addr) => Ok(socket_addr.port()),
+        ProtoCommand::CONNECTED(socket_addr) => Ok(socket_addr),
         _ => Err(Box::new(GenericError(
             "Invalid command from remote instance".to_string(),
         ))),
@@ -157,12 +175,12 @@ async fn handle_command_stream(
             match cmd {
                 ProtoCommand::CLOSED => {
                     log::info!("Remote tunnel instance has closed the connection");
-                    close_channel_sender.send(()).await.unwrap();
+                    let _ = close_channel_sender.send(()).await;
                     break;
                 }
                 ProtoCommand::ACK => {
                     log::info!("Closing local instance");
-                    close_channel_sender.send(()).await.unwrap();
+                    let _ = close_channel_sender.send(()).await;
                     break;
                 }
                 _ => {}

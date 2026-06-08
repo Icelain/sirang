@@ -1,41 +1,59 @@
 use super::config;
-use crate::quic;
+use crate::{cert, quic};
 use s2n_quic::stream::BidirectionalStream;
 use s2n_quic::Connection;
 use std::error::Error;
 use tokio::net::TcpListener;
 use tokio::net::TcpStream;
 
-// Main function to start the local forwarding server
 pub async fn forward_local(
-    local_config: config::LocalConfig,
+    mut local_config: config::LocalConfig,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    ensure_tls_cert(&mut local_config).await?;
     let quic_conn = setup_quic_connection(&local_config).await?;
     let tcp_listener = setup_tcp_listener(&local_config).await?;
 
     handle_incoming_connections(tcp_listener, quic_conn, local_config.buffer_size).await
 }
 
-// Set up the QUIC connection with the remote server
+async fn ensure_tls_cert(
+    local_config: &mut config::LocalConfig,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    if !local_config.tls_cert.is_empty() {
+        return Ok(());
+    }
+
+    let cache_path = local_config.cert_cache_path.clone().unwrap_or_else(|| {
+        cert::cert_cache_path(
+            &local_config.remote_host,
+            local_config.remote_quic_server_addr.port(),
+        )
+    });
+
+    local_config.tls_cert = cert::load_or_fetch_cert(
+        &local_config.remote_host,
+        local_config.remote_quic_server_addr,
+        &cache_path,
+    )
+    .await?;
+
+    Ok(())
+}
+
 async fn setup_quic_connection(
     local_config: &config::LocalConfig,
 ) -> Result<Connection, Box<dyn Error + Send + Sync + 'static>> {
-    let server_name = if local_config.remote_host.is_empty() {
-        local_config.remote_quic_server_addr.ip().to_string()
-    } else {
-        local_config.remote_host.clone()
-    };
     let mut quic_conn = quic::new_quic_connection(
         local_config.remote_quic_server_addr,
         &local_config.tls_cert,
-        &server_name,
+        &local_config.remote_host,
     )
     .await?;
 
     quic_conn.keep_alive(true)?;
     log::info!(
         "Quic connection established with {} ({}) buffer size: {}",
-        server_name,
+        local_config.remote_host,
         local_config.remote_quic_server_addr,
         local_config.buffer_size
     );
@@ -43,7 +61,6 @@ async fn setup_quic_connection(
     Ok(quic_conn)
 }
 
-// Set up the TCP listener for incoming connections
 async fn setup_tcp_listener(
     local_config: &config::LocalConfig,
 ) -> Result<TcpListener, Box<dyn Error + Send + Sync + 'static>> {
@@ -54,7 +71,6 @@ async fn setup_tcp_listener(
     Ok(tcp_listener)
 }
 
-// Handle all incoming TCP connections and forward them to QUIC streams
 async fn handle_incoming_connections(
     tcp_listener: TcpListener,
     mut quic_conn: Connection,
@@ -68,7 +84,6 @@ async fn handle_incoming_connections(
     Ok(())
 }
 
-// Spawn a new task to handle an individual connection
 fn spawn_connection_handler(
     tcp_stream: TcpStream,
     quic_bidirectional_stream: BidirectionalStream,
@@ -83,7 +98,6 @@ fn spawn_connection_handler(
     });
 }
 
-// Handle a single connection's bidirectional copying
 async fn handle_single_connection(
     mut tcp_stream: TcpStream,
     mut quic_bidirectional_stream: BidirectionalStream,
