@@ -9,7 +9,6 @@ pub async fn forward_remote(
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     cert::serve_cert(config.cert_listen_addr(), config.tls_cert.clone()).await?;
     let server = setup_quic_server(&config).await?;
-
     handle_incoming_connections(server, config).await
 }
 
@@ -32,6 +31,8 @@ async fn handle_incoming_connections(
     mut server: s2n_quic::Server,
     config: RemoteConfig,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    // Each accepted QUIC connection is a distinct local client; handle them
+    // concurrently so one remote instance serves many locals.
     while let Some(connection) = server.accept().await {
         spawn_connection_handler(connection, config.clone());
     }
@@ -40,6 +41,10 @@ async fn handle_incoming_connections(
 
 fn spawn_connection_handler(mut connection: s2n_quic::Connection, config: RemoteConfig) {
     tokio::spawn(async move {
+        if let Ok(remote_addr) = connection.remote_addr() {
+            log::info!("Local client connected from {remote_addr}");
+        }
+
         while let Ok(Some(quic_stream)) = connection.accept_bidirectional_stream().await {
             if let Ok(remote_addr) = connection.remote_addr() {
                 handle_stream(
@@ -50,6 +55,10 @@ fn spawn_connection_handler(mut connection: s2n_quic::Connection, config: Remote
                 )
                 .await;
             }
+        }
+
+        if let Ok(remote_addr) = connection.remote_addr() {
+            log::debug!("Local client disconnected: {remote_addr}");
         }
     });
 }
