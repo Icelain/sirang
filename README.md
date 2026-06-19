@@ -1,61 +1,129 @@
-# An Experimental TCP Tunnel over QUIC
+# sirang
+
+An experimental TCP tunnel over QUIC. Supports **forward** and **reverse** tunnels, automatic TLS certificate download for local clients, DNS resolution for domain-backed remotes, and multiple local clients per remote instance.
 
 ## Install
-Install through cargo with ```cargo install sirang``` <br>
-### OR <br>
 
-Install prebuilt binaries from the [Github Releases](https://github.com/Icelain/sirang/releases) page
-
-### OR <br>
-Clone the repo and compile with ```cargo build --release```
-
-## Running a Forward Tunnel
-
-### On your remote server:
+```bash
+cargo install sirang
 ```
-sirang forward [GENERAL_OPTIONS] remote [OPTIONS] --key <PATH> --cert <PATH> --forwardaddr <ADDRESS>
+
+Or install prebuilt binaries from the [GitHub Releases](https://github.com/Icelain/sirang/releases) page.
+
+Or clone and build:
+
+```bash
+cargo build --release
 ```
-Here, ```--key``` and ```--cert``` and your tls key and tls certificate respectively.
-```--forwardaddr``` is the remote tcp_address you're forwarding your traffic to.
 
-By default, the remote quic server starts on address `0.0.0.0:4433`.
-To change this, you can specify the optional argument ```--quicaddr``` to start the quic server on your preferred address.
+## Forward tunnel
 
-### On your local machine:
+Traffic flows: **local TCP → QUIC → remote TCP target**.
+
+### Remote
+
+```bash
+sirang forward remote --key <PATH> --cert <PATH> --forward <ADDRESS> [--quic <ADDRESS>]
 ```
-sirang forward [GENERAL_OPTIONS] local [OPTIONS] --cert <PATH> --remoteaddr <ADDRESS>
+
+| Flag | Description |
+|------|-------------|
+| `--key` / `-k` | TLS private key (required) |
+| `--cert` / `-c` | TLS certificate (required) |
+| `--forward` / `-f` | TCP address to forward to (required) |
+| `--quic` / `-q` | QUIC listen address (default `0.0.0.0:4433`) |
+
+The remote also serves its certificate over TCP on **QUIC port + 1** so local clients can download it automatically.
+
+### Local
+
+```bash
+sirang forward local --remote <HOST:PORT> [--local <ADDRESS>]
 ```
-Here, ```--cert``` is the tls certificate of the remote server and ```--remoteaddr``` is the address of the remote quic server created with ```sirang forward remote```.
 
-By default, the local tcp server starts on `127.0.0.1:8080`.
-To change this, you can specify the optional argument ```--localaddr``` to start the tcp server on your preferred address.
+| Flag | Description |
+|------|-------------|
+| `--remote` / `-r` | Remote sirang instance as `host:port` or `ip:port` (required). Hostnames are DNS-resolved. |
+| `--local` / `-l` | Local TCP listen address (default `127.0.0.1:8080`) |
 
-## Running a Reverse Tunnel
+No `--cert` is needed. On first connect the client downloads the remote certificate and caches it under `~/.sirang/certs/`.
 
-### On your remote server:
+Multiple local clients may connect to the same remote forward instance; each has its own QUIC connection and traffic is handled independently.
+
+## Reverse tunnel
+
+Traffic flows: **remote TCP → QUIC → local TCP target**.
+
+### Remote
+
+```bash
+sirang reverse remote --key <PATH> --cert <PATH> [--quic <ADDRESS>] [--tcp <ADDRESS>]
 ```
-sirang reverse [GENERAL_OPTIONS] remote [OPTIONS] --key <PATH> --cert <PATH>
+
+| Flag | Description |
+|------|-------------|
+| `--key` / `-k` | TLS private key (required) |
+| `--cert` / `-c` | TLS certificate (required) |
+| `--quic` / `-q` | QUIC listen address (default `0.0.0.0:4433`) |
+| `--tcp` / `-t` | Preferred TCP listen address for clients (default `0.0.0.0:5000`) |
+
+Certificate download works the same as forward (QUIC port + 1).
+
+Multiple local clients may attach to one reverse remote. The first client gets the preferred `--tcp` address; additional clients receive an ephemeral port on the same IP. Each client is told its public access address during the handshake.
+
+### Local
+
+```bash
+sirang reverse local --remote <HOST:PORT> --local <ADDRESS>
 ```
-Here, ```--key``` and ```--cert``` and your tls key and tls certificate respectively.
 
-By default, the remote quic server starts on address `0.0.0.0:4433` and the default tcp server starts on address `0.0.0.0:5000`.
-To change this, you can respectively specify the optional arguments ```--quicaddr``` and ```--tcpaddr``` to start the quic and tcp servers on your preferred addresses.
+| Flag | Description |
+|------|-------------|
+| `--remote` / `-r` | Remote sirang instance as `host:port` (required). Supports DNS names. |
+| `--local` / `-l` | Local TCP address to expose remotely (required) |
 
-### On your local machine:
+Again, no `--cert` on the local side.
+
+## Global options
+
+These apply to both `forward` and `reverse`:
+
+| Flag | Description |
+|------|-------------|
+| `--debug` / `-d` | Enable debug/trace logging |
+| `--buffersize` / `-b` | Copy buffer size in bytes (default 32 KiB) |
+
+## Examples
+
+```bash
+# Remote (VPS): forward tunnel to an internal HTTP service
+sirang forward remote -k key.pem -c cert.pem -f 127.0.0.1:80 -q 0.0.0.0:4433
+
+# Local: reach that service via DNS name (cert auto-downloaded)
+sirang forward local -r tunnel.example.com:4433 -l 127.0.0.1:8080
+
+# Remote: reverse tunnel endpoint
+sirang reverse remote -k key.pem -c cert.pem
+
+# Local A and B can both connect to the same remote
+sirang reverse local -r tunnel.example.com:4433 -l 127.0.0.1:3000
+sirang reverse local -r tunnel.example.com:4433 -l 127.0.0.1:3001
 ```
-sirang reverse [GENERAL_OPTIONS] local --cert <PATH> --localaddr <ADDRESS> --remoteaddr <ADDRESS>
+
+## Development
+
+```bash
+cargo test
 ```
-Here, ```--cert``` is the tls certificate of the remote server and ```--remoteaddr``` is the address of the remote quic server created with ```sirang reverse remote```.
 
-The argument ```--localaddr``` specifies the local tcp server you want to tunnel to.
-
-## General Options:
-
-To turn on debug logging, use ```--debug``` before either command. <br/>
-To set the buffer size(in bytes), use ```--buffersize``` before either command. The default buffer size is 32KB.
+Test certificates (`test_cert.pem` / `test_key.pem`) are self-signed for `localhost` / `127.0.0.1` and used by the QUIC integration tests.
 
 ## Progress
 
-- [X] Functionality
-- [X] Debug Logging
-- [X] Testing
+- [x] Forward and reverse tunnels
+- [x] Debug logging
+- [x] Testing
+- [x] Automatic certificate download for local clients
+- [x] DNS resolution for remote hosts
+- [x] Multiple local clients per remote instance
+- [x] Simplified CLI
