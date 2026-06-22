@@ -15,6 +15,9 @@ pub struct LocalConfig {
     pub buffer_size: usize,
     /// Optional override for cert cache path; default is ~/.sirang/certs/...
     pub cert_cache_path: Option<PathBuf>,
+    /// When true (reverse tunnel only), parse HTTP on QUIC streams with hyper,
+    /// display requests in the terminal, and proxy them to the local address.
+    pub http_mode: bool,
 }
 
 impl Default for LocalConfig {
@@ -27,6 +30,7 @@ impl Default for LocalConfig {
             tls_cert: String::new(),
             buffer_size: DEFAULT_BUFSIZE,
             cert_cache_path: None,
+            http_mode: false,
         }
     }
 }
