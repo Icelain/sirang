@@ -6,6 +6,13 @@ use crate::{
     quic,
 };
 use bytes::Bytes;
+use http_body_util::{BodyExt, Full};
+use hyper::body::Incoming;
+use hyper::client::conn::http1 as client_http1;
+use hyper::server::conn::http1 as server_http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response};
+use hyper_util::rt::TokioIo;
 use s2n_quic::stream::BidirectionalStream;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -27,6 +34,9 @@ pub async fn reverse_local(
         remote_tcp_address,
         config.remote_host
     );
+    if config.http_mode {
+        log::info!("HTTP mode enabled: requests over the tunnel are parsed and printed here");
+    }
 
     let (close_channel_sender, mut close_channel_receiver) = channel::<()>(1);
     tokio::spawn(handle_command_stream(command_stream, close_channel_sender));
@@ -44,6 +54,7 @@ pub async fn reverse_local(
             server_created_quic_bd_stream,
             config.local_tcp_server_addr,
             config.buffer_size,
+            config.http_mode,
         );
     }
     Ok(())
@@ -130,14 +141,20 @@ fn spawn_tunnel_handler(
     quic_stream: BidirectionalStream,
     tcp_addr: SocketAddr,
     buffer_size: usize,
+    http_mode: bool,
 ) {
     tokio::spawn(async move {
-        if let Err(e) = handle_single_tunnel(quic_stream, tcp_addr, buffer_size).await {
-            log::debug!("Error while bidirectional copy: {e}");
+        if http_mode {
+            if let Err(e) = handle_http_tunnel(quic_stream, tcp_addr).await {
+                log::debug!("HTTP tunnel stream error: {e}");
+            }
+        } else if let Err(e) = handle_single_tunnel(quic_stream, tcp_addr, buffer_size).await {
+            log::debug!("Tunnel stream error: {e}");
         }
     });
 }
 
+/// Raw TCP byte copy (default reverse mode).
 async fn handle_single_tunnel(
     mut quic_stream: BidirectionalStream,
     tcp_addr: SocketAddr,
@@ -154,6 +171,113 @@ async fn handle_single_tunnel(
     .await?;
 
     Ok(())
+}
+
+/// HTTP mode: use hyper to parse requests from the QUIC-backed stream, print them,
+/// and proxy to the local TCP target (see https://hyper.rs/guides/1/server/hello-world/).
+async fn handle_http_tunnel(
+    quic_stream: BidirectionalStream,
+    local_tcp_addr: SocketAddr,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    // TokioIo adapts tokio::io traits (implemented by BidirectionalStream) to hyper::rt.
+    let io = TokioIo::new(quic_stream);
+
+    let service = service_fn(move |req: Request<Incoming>| {
+        let local_tcp_addr = local_tcp_addr;
+        async move { proxy_and_display(req, local_tcp_addr).await }
+    });
+
+    if let Err(e) = server_http1::Builder::new()
+        .serve_connection(io, service)
+        .await
+    {
+        // Connection closed by peer is common and not always an error worth elevating.
+        log::debug!("HTTP connection on tunnel ended: {e}");
+    }
+
+    Ok(())
+}
+
+/// Collect the request body, display the full request, proxy to the local service, return the response.
+async fn proxy_and_display(
+    req: Request<Incoming>,
+    local_tcp_addr: SocketAddr,
+) -> Result<Response<Full<Bytes>>, std::io::Error> {
+    let (parts, body) = req.into_parts();
+    let body_bytes = body
+        .collect()
+        .await
+        .map_err(|e| std::io::Error::other(format!("Failed to read request body: {e}")))?
+        .to_bytes();
+
+    display_http_request(&parts, &body_bytes);
+
+    let outbound = Request::from_parts(parts, Full::new(body_bytes));
+    let response = send_to_local(outbound, local_tcp_addr)
+        .await
+        .map_err(std::io::Error::other)?;
+
+    let (res_parts, res_body) = response.into_parts();
+    let res_bytes = res_body
+        .collect()
+        .await
+        .map_err(|e| std::io::Error::other(format!("Failed to read response body: {e}")))?
+        .to_bytes();
+
+    log::info!(
+        "HTTP response: {} ({} bytes)",
+        res_parts.status,
+        res_bytes.len()
+    );
+
+    Ok(Response::from_parts(res_parts, Full::new(res_bytes)))
+}
+
+fn display_http_request(parts: &hyper::http::request::Parts, body: &Bytes) {
+    // Use println so the request is always visible even at default Info log level
+    // and without mixing with logger prefixes.
+    println!("---------- HTTP request ----------");
+    println!("{} {} {:?}", parts.method, parts.uri, parts.version);
+    for (name, value) in parts.headers.iter() {
+        let value = value.to_str().unwrap_or("<non-utf8>");
+        println!("{name}: {value}");
+    }
+    if body.is_empty() {
+        println!("(empty body)");
+    } else {
+        println!();
+        match std::str::from_utf8(body) {
+            Ok(text) => println!("{text}"),
+            Err(_) => println!("<binary body, {} bytes>", body.len()),
+        }
+    }
+    println!("----------------------------------");
+}
+
+/// Open a TCP connection to the local service and send the request with hyper's HTTP/1 client.
+async fn send_to_local(
+    req: Request<Full<Bytes>>,
+    local_tcp_addr: SocketAddr,
+) -> Result<Response<Incoming>, String> {
+    let stream = TcpStream::connect(local_tcp_addr)
+        .await
+        .map_err(|e| format!("Unable to connect to local address {local_tcp_addr}: {e}"))?;
+    let io = TokioIo::new(stream);
+
+    let (mut sender, conn) = client_http1::handshake(io)
+        .await
+        .map_err(|e| format!("HTTP handshake with local failed: {e}"))?;
+
+    tokio::spawn(async move {
+        if let Err(e) = conn.await {
+            log::debug!("Local HTTP connection closed with error: {e}");
+        }
+    });
+
+    sender
+        .send_request(req)
+        .await
+        .map_err(|e| format!("Failed to send request to local: {e}"))
 }
 
 async fn handle_command_stream(
