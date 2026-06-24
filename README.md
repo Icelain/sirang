@@ -74,15 +74,36 @@ Multiple local clients may attach to one reverse remote. The first client gets t
 ### Local
 
 ```bash
-sirang reverse local --remote <HOST:PORT> --local <ADDRESS>
+sirang reverse local --remote <HOST:PORT> --local <ADDRESS> [--http]
 ```
 
 | Flag | Description |
 |------|-------------|
 | `--remote` / `-r` | Remote sirang instance as `host:port` (required). Supports DNS names. |
 | `--local` / `-l` | Local TCP address to expose remotely (required) |
+| `--http` / `-H` | Optional HTTP mode (see below) |
 
 Again, no `--cert` on the local side.
+
+### HTTP mode (reverse local)
+
+With `--http`, traffic on each tunnelled connection is treated as HTTP/1. The local client uses [hyper](https://hyper.rs/) to:
+
+1. Read and parse requests from the TCP stream carried over QUIC
+2. Print each request (method, URI, headers, body) to the terminal
+3. Forward the request to `--local` and return the upstream response to the remote client
+
+Example:
+
+```bash
+# Remote
+sirang reverse remote -k key.pem -c cert.pem
+
+# Local: expose a local HTTP service and log every request
+sirang reverse local -r tunnel.example.com:4433 -l 127.0.0.1:3000 --http
+```
+
+Without `--http`, the reverse tunnel remains a transparent TCP byte pipe.
 
 ## Global options
 
