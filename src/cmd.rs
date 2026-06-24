@@ -101,6 +101,11 @@ pub async fn execute() {
                             arg!(-l --local <ADDRESS> "Local TCP address to tunnel")
                                 .required(true)
                                 .value_parser(value_parser!(SocketAddr)),
+                        )
+                        .arg(
+                            arg!(-H --http "Parse HTTP on tunnel streams with hyper, print requests, proxy to --local")
+                                .required(false)
+                                .action(ArgAction::SetTrue),
                         ),
                 )
                 .arg(
@@ -216,6 +221,10 @@ async fn handle_matches(
 
         if let Some(buffer_size) = buffersize {
             local_config.buffer_size = *buffer_size;
+        }
+
+        if tunnel_type == TunnelType::Reverse {
+            local_config.http_mode = local_matches.get_flag("http");
         }
 
         local_config.tunnel_type = tunnel_type;
