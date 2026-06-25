@@ -1,6 +1,7 @@
-use std::{net::SocketAddr, str::FromStr};
+use std::{net::SocketAddr, path::PathBuf, str::FromStr};
 
 use crate::common::{TunnelType, DEFAULT_BUFSIZE};
+use crate::remote::groups::{AuthConfig, TunnelGroups};
 
 #[derive(Clone)]
 pub struct RemoteConfig {
@@ -9,7 +10,7 @@ pub struct RemoteConfig {
     // only used for the forward tunnel
     pub tcp_forward_address: Option<SocketAddr>,
 
-    // only used for the reverse tunnel (preferred listen address for clients)
+    // only used for the reverse tunnel (legacy per-client TCP listen)
     pub tcp_reverse_address: Option<SocketAddr>,
 
     pub quic_address: SocketAddr,
@@ -18,6 +19,13 @@ pub struct RemoteConfig {
     pub tls_cert: String,
     pub tls_key: String,
     pub buffer_size: usize,
+
+    /// Shared HTTP listen address for reverst-style reverse proxy (optional).
+    pub http_address: Option<SocketAddr>,
+    /// Tunnel groups for HTTP load-balanced reverse mode.
+    pub tunnel_groups: Option<TunnelGroups>,
+    /// Path groups were loaded from (for logging).
+    pub groups_path: Option<PathBuf>,
 }
 
 impl RemoteConfig {
@@ -32,6 +40,9 @@ impl RemoteConfig {
                 tls_cert: String::new(),
                 tls_key: String::new(),
                 buffer_size: DEFAULT_BUFSIZE,
+                http_address: None,
+                tunnel_groups: None,
+                groups_path: None,
             },
 
             TunnelType::Reverse => Self {
@@ -43,6 +54,9 @@ impl RemoteConfig {
                 tls_key: String::new(),
                 tls_cert: String::new(),
                 buffer_size: DEFAULT_BUFSIZE,
+                http_address: None,
+                tunnel_groups: None,
+                groups_path: None,
             },
         }
     }
@@ -50,5 +64,19 @@ impl RemoteConfig {
     pub fn cert_listen_addr(&self) -> SocketAddr {
         self.cert_address
             .unwrap_or_else(|| crate::cert::cert_addr_from_quic(self.quic_address))
+    }
+
+    /// Reverst-style mode: shared HTTP front + tunnel groups.
+    pub fn is_group_http_mode(&self) -> bool {
+        self.http_address.is_some() && self.tunnel_groups.is_some()
+    }
+
+    pub fn set_default_group(
+        &mut self,
+        name: &str,
+        hosts: Vec<String>,
+        auth: AuthConfig,
+    ) {
+        self.tunnel_groups = Some(TunnelGroups::single_group(name, hosts, auth));
     }
 }

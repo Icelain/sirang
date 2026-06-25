@@ -1,0 +1,10 @@
+# Reverst-compatible tunnel groups configuration for sirang reverse remote.
+groups:
+  "localhost":
+    hosts:
+      - "localhost"
+      - "127.0.0.1"
+    authentication:
+      basic:
+        username: "user"
+        password: "pass"

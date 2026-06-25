@@ -1,11 +1,13 @@
 use crate::{common::TunnelType, errors, local, quic, remote};
+use crate::remote::groups::{AuthConfig, BasicAuth, BearerAuth, TunnelGroups};
+use base64::Engine;
 use std::{net::SocketAddr, path::PathBuf, process::exit};
 
 use clap::{arg, command, value_parser, ArgAction, ArgMatches, Command};
 
 pub async fn execute() {
     let matches = command!()
-        .about("A forward and reverse TCP tunnel over QUIC")
+        .about("A forward and reverse TCP tunnel over QUIC (reverst-style HTTP reverse tunnels supported)")
         .subcommand(
             Command::new("forward")
                 .arg_required_else_help(true)
@@ -63,7 +65,7 @@ pub async fn execute() {
         .subcommand(
             Command::new("reverse")
                 .arg_required_else_help(true)
-                .about("Reverse tunnel: remote TCP → remote QUIC → local TCP target")
+                .about("Reverse tunnel: expose local services via remote (TCP or HTTP groups)")
                 .subcommand(
                     Command::new("remote")
                         .about("Run the remote side of a reverse tunnel")
@@ -78,17 +80,35 @@ pub async fn execute() {
                                 .value_parser(value_parser!(PathBuf)),
                         )
                         .arg(
-                            arg!(-q --quic <ADDRESS> "QUIC listen address")
+                            arg!(-q --quic <ADDRESS> "QUIC tunnel listen address")
                                 .required(false)
                                 .default_value("0.0.0.0:4433")
                                 .value_parser(value_parser!(SocketAddr)),
                         )
                         .arg(
-                            arg!(-t --tcp <ADDRESS> "Preferred TCP listen address for clients")
+                            arg!(-t --tcp <ADDRESS> "Preferred per-client TCP listen (legacy mode)")
                                 .required(false)
                                 .default_value("0.0.0.0:5000")
                                 .value_parser(value_parser!(SocketAddr)),
-                        ),
+                        )
+                        .arg(
+                            arg!(-H --http <ADDRESS> "Shared HTTP listen address (reverst-style group mode)")
+                                .required(false)
+                                .value_parser(value_parser!(SocketAddr)),
+                        )
+                        .arg(
+                            arg!(-g --groups <PATH> "Tunnel groups YAML file (reverst-compatible)")
+                                .required(false)
+                                .value_parser(value_parser!(PathBuf)),
+                        )
+                        .arg(
+                            arg!(--group <NAME> "Default tunnel group name when not using --groups")
+                                .required(false)
+                                .default_value("localhost"),
+                        )
+                        .arg(arg!(--user <USER> "Basic auth username for the default group").required(false))
+                        .arg(arg!(--password <PASS> "Basic auth password for the default group").required(false))
+                        .arg(arg!(--token <TOKEN> "Bearer token for the default group").required(false)),
                 )
                 .subcommand(
                     Command::new("local")
@@ -98,15 +118,22 @@ pub async fn execute() {
                                 .required(true),
                         )
                         .arg(
-                            arg!(-l --local <ADDRESS> "Local TCP address to tunnel")
+                            arg!(-l --local <ADDRESS> "Local TCP/HTTP address to tunnel")
                                 .required(true)
                                 .value_parser(value_parser!(SocketAddr)),
                         )
                         .arg(
-                            arg!(-H --http "Parse HTTP on tunnel streams with hyper, print requests, proxy to --local")
+                            arg!(-H --http "Legacy mode: parse HTTP on streams and print requests")
                                 .required(false)
                                 .action(ArgAction::SetTrue),
-                        ),
+                        )
+                        .arg(
+                            arg!(--group <NAME> "Register into this tunnel group (enables reverst-style HTTP proxy)")
+                                .required(false),
+                        )
+                        .arg(arg!(--user <USER> "Basic auth username for registration").required(false))
+                        .arg(arg!(--password <PASS> "Basic auth password for registration").required(false))
+                        .arg(arg!(--token <TOKEN> "Bearer token for registration").required(false)),
                 )
                 .arg(
                     arg!(-d --debug "Enable debug logging")
@@ -164,6 +191,51 @@ async fn handle_matches(
         if remote_config.tunnel_type == TunnelType::Reverse {
             if let Some(tcp_addr) = remote_matches.get_one::<SocketAddr>("tcp") {
                 remote_config.tcp_reverse_address = Some(*tcp_addr);
+            }
+
+            if let Some(http_addr) = remote_matches.get_one::<SocketAddr>("http") {
+                remote_config.http_address = Some(*http_addr);
+            }
+
+            if let Some(groups_path) = remote_matches.get_one::<PathBuf>("groups") {
+                if !groups_path.exists() {
+                    return Err(Box::new(errors::GenericError(format!(
+                        "Groups file not found: {}",
+                        groups_path.display()
+                    ))));
+                }
+                remote_config.tunnel_groups = Some(TunnelGroups::from_file(groups_path)?);
+                remote_config.groups_path = Some(groups_path.clone());
+            } else if remote_config.http_address.is_some() {
+                // Default single group for local reverst-style setups.
+                let name = remote_matches
+                    .get_one::<String>("group")
+                    .map(|s| s.as_str())
+                    .unwrap_or("localhost");
+                let mut auth = AuthConfig::default();
+                if let (Some(user), Some(pass)) = (
+                    remote_matches.get_one::<String>("user"),
+                    remote_matches.get_one::<String>("password"),
+                ) {
+                    auth.basic = Some(BasicAuth {
+                        username: user.clone(),
+                        password: pass.clone(),
+                    });
+                }
+                if let Some(token) = remote_matches.get_one::<String>("token") {
+                    auth.bearer = Some(BearerAuth {
+                        token: token.clone(),
+                    });
+                }
+                remote_config.set_default_group(
+                    name,
+                    vec![
+                        "localhost".into(),
+                        "127.0.0.1".into(),
+                        name.to_string(),
+                    ],
+                    auth,
+                );
             }
         } else if let Some(forward_addr) = remote_matches.get_one::<SocketAddr>("forward") {
             remote_config.tcp_forward_address = Some(*forward_addr);
@@ -225,6 +297,10 @@ async fn handle_matches(
 
         if tunnel_type == TunnelType::Reverse {
             local_config.http_mode = local_matches.get_flag("http");
+            if let Some(group) = local_matches.get_one::<String>("group") {
+                local_config.tunnel_group = Some(group.clone());
+            }
+            local_config.authorization = build_authorization(local_matches);
         }
 
         local_config.tunnel_type = tunnel_type;
@@ -233,4 +309,18 @@ async fn handle_matches(
     }
 
     Ok(())
+}
+
+fn build_authorization(matches: &ArgMatches) -> Option<String> {
+    if let Some(token) = matches.get_one::<String>("token") {
+        return Some(format!("Bearer {token}"));
+    }
+    if let (Some(user), Some(pass)) = (
+        matches.get_one::<String>("user"),
+        matches.get_one::<String>("password"),
+    ) {
+        let cred = base64::engine::general_purpose::STANDARD.encode(format!("{user}:{pass}"));
+        return Some(format!("Basic {cred}"));
+    }
+    None
 }

@@ -17,23 +17,37 @@ pub mod proto {
         CONNECTED(SocketAddr),
         CLOSED,
         ACK,
+        /// Local client registers into a tunnel group (reverst-style).
+        /// Optional second field is a full Authorization header value (e.g. "Basic xxx").
+        REGISTER { group: String, authorization: Option<String> },
+        REGISTERED,
+        RegisterErr(String),
     }
 
     impl ProtoCommand {
         pub fn deserialize(&self) -> Bytes {
-            match *self {
-                ProtoCommand::CONNECTED(socket_addr) => {
-                    Bytes::copy_from_slice(
-                        [b"CONNECTED ", socket_addr.to_string().as_bytes()]
-                            .concat()
-                            .as_slice(),
-                    )
+            match self {
+                ProtoCommand::CONNECTED(socket_addr) => Bytes::copy_from_slice(
+                    [b"CONNECTED ", socket_addr.to_string().as_bytes()]
+                        .concat()
+                        .as_slice(),
+                ),
+                ProtoCommand::CLOSED => Bytes::from_static(b"CLOSED"),
+                ProtoCommand::ACK => Bytes::from_static(b"ACK"),
+                ProtoCommand::REGISTER {
+                    group,
+                    authorization,
+                } => {
+                    let mut s = format!("REGISTER {group}");
+                    if let Some(auth) = authorization {
+                        s.push(' ');
+                        s.push_str(auth);
+                    }
+                    Bytes::copy_from_slice(s.as_bytes())
                 }
-                ProtoCommand::CLOSED => {
-                    Bytes::from_static(b"CLOSED")
-                }
-                ProtoCommand::ACK => {
-                    Bytes::from_static(b"ACK")
+                ProtoCommand::REGISTERED => Bytes::from_static(b"REGISTERED"),
+                ProtoCommand::RegisterErr(msg) => {
+                    Bytes::copy_from_slice(format!("REGISTER_ERR {msg}").as_bytes())
                 }
             }
         }
@@ -58,6 +72,39 @@ pub mod proto {
                     }
                     b"ACK" => {
                         return Some(ProtoCommand::ACK);
+                    }
+                    b"REGISTERED" => {
+                        return Some(ProtoCommand::REGISTERED);
+                    }
+                    b"REGISTER_ERR" => {
+                        let msg = iter
+                            .next()
+                            .and_then(|b| str::from_utf8(b).ok())
+                            .unwrap_or("error")
+                            .to_string();
+                        // include remainder of message
+                        let rest: Vec<&str> = iter
+                            .filter_map(|b| str::from_utf8(b).ok())
+                            .collect();
+                        let msg = if rest.is_empty() {
+                            msg
+                        } else {
+                            format!("{msg} {}", rest.join(" "))
+                        };
+                        return Some(ProtoCommand::RegisterErr(msg));
+                    }
+                    b"REGISTER" => {
+                        let group = iter
+                            .next()
+                            .and_then(|b| str::from_utf8(b).ok())?
+                            .to_string();
+                        let scheme = iter.next().and_then(|b| str::from_utf8(b).ok());
+                        let payload = iter.next().and_then(|b| str::from_utf8(b).ok());
+                        let authorization = match (scheme, payload) {
+                            (Some(s), Some(p)) => Some(format!("{s} {p}")),
+                            _ => None,
+                        };
+                        return Some(ProtoCommand::REGISTER { group, authorization });
                     }
                     _ => {}
                 }

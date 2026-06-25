@@ -26,38 +26,101 @@ pub async fn reverse_local(
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     ensure_tls_cert(&mut config).await?;
     let mut quic_client = setup_quic_connection(&config).await?;
-    let mut command_stream = quic_client.open_bidirectional_stream().await?;
 
-    let remote_tcp_address = perform_handshake(&mut command_stream).await?;
-    log::info!(
-        "Access this tunnel at {} (via remote {})",
-        remote_tcp_address,
-        config.remote_host
-    );
-    if config.http_mode {
-        log::info!("HTTP mode enabled: requests over the tunnel are parsed and printed here");
-    }
+    let group_mode = config.tunnel_group.is_some();
 
-    let (close_channel_sender, mut close_channel_receiver) = channel::<()>(1);
-    tokio::spawn(handle_command_stream(command_stream, close_channel_sender));
-
-    loop {
-        let server_created_quic_bd_stream = tokio::select! {
-            bd_stream = quic_client.accept_bidirectional_stream() => match bd_stream? {
-                Some(s) => s,
-                None => break,
-            },
-            _ = close_channel_receiver.recv() => break,
-        };
-
-        spawn_tunnel_handler(
-            server_created_quic_bd_stream,
-            config.local_tcp_server_addr,
-            config.buffer_size,
-            config.http_mode,
+    if group_mode {
+        register_with_group(&mut quic_client, &config).await?;
+        log::info!(
+            "Registered on tunnel group {:?} at {} ({}); proxying HTTP to {}",
+            config.tunnel_group,
+            config.remote_host,
+            config.remote_quic_server_addr,
+            config.local_tcp_server_addr
         );
+        // Always HTTP-proxy in group mode (reverst parity).
+        run_stream_loop(quic_client, config.local_tcp_server_addr, true, config.buffer_size).await
+    } else {
+        let mut command_stream = quic_client.open_bidirectional_stream().await?;
+        let remote_tcp_address = perform_handshake(&mut command_stream).await?;
+        log::info!(
+            "Access this tunnel at {} (via remote {})",
+            remote_tcp_address,
+            config.remote_host
+        );
+        if config.http_mode {
+            log::info!("HTTP mode enabled: requests over the tunnel are parsed and printed here");
+        }
+
+        let (close_channel_sender, mut close_channel_receiver) = channel::<()>(1);
+        tokio::spawn(handle_command_stream(command_stream, close_channel_sender));
+
+        loop {
+            let server_created_quic_bd_stream = tokio::select! {
+                bd_stream = quic_client.accept_bidirectional_stream() => match bd_stream? {
+                    Some(s) => s,
+                    None => break,
+                },
+                _ = close_channel_receiver.recv() => break,
+            };
+
+            spawn_tunnel_handler(
+                server_created_quic_bd_stream,
+                config.local_tcp_server_addr,
+                config.buffer_size,
+                config.http_mode,
+            );
+        }
+        Ok(())
+    }
+}
+
+async fn run_stream_loop(
+    mut quic_client: s2n_quic::connection::Connection,
+    local_tcp: SocketAddr,
+    http_mode: bool,
+    buffer_size: usize,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    while let Some(stream) = quic_client.accept_bidirectional_stream().await? {
+        spawn_tunnel_handler(stream, local_tcp, buffer_size, http_mode);
     }
     Ok(())
+}
+
+async fn register_with_group(
+    quic_client: &mut s2n_quic::connection::Connection,
+    config: &LocalConfig,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    let group = config
+        .tunnel_group
+        .as_ref()
+        .ok_or_else(|| GenericError("tunnel group required".into()))?;
+
+    let mut stream = quic_client.open_bidirectional_stream().await?;
+    let cmd = ProtoCommand::REGISTER {
+        group: group.clone(),
+        authorization: config.authorization.clone(),
+    };
+    stream.send(cmd.deserialize()).await?;
+
+    let resp = match stream.receive().await? {
+        Some(d) => d,
+        None => {
+            return Err(Box::new(GenericError(
+                "no registration response from remote".into(),
+            )))
+        }
+    };
+
+    match ProtoCommand::serialize(resp) {
+        Some(ProtoCommand::REGISTERED) => Ok(()),
+        Some(ProtoCommand::RegisterErr(msg)) => Err(Box::new(GenericError(format!(
+            "registration rejected: {msg}"
+        )))),
+        _ => Err(Box::new(GenericError(
+            "unexpected registration response".into(),
+        ))),
+    }
 }
 
 async fn ensure_tls_cert(
@@ -154,7 +217,6 @@ fn spawn_tunnel_handler(
     });
 }
 
-/// Raw TCP byte copy (default reverse mode).
 async fn handle_single_tunnel(
     mut quic_stream: BidirectionalStream,
     tcp_addr: SocketAddr,
@@ -173,13 +235,12 @@ async fn handle_single_tunnel(
     Ok(())
 }
 
-/// HTTP mode: use hyper to parse requests from the QUIC-backed stream, print them,
-/// and proxy to the local TCP target (see https://hyper.rs/guides/1/server/hello-world/).
+/// HTTP mode / group mode: hyper parses requests on the QUIC stream, prints them,
+/// and proxies to the local TCP target.
 async fn handle_http_tunnel(
     quic_stream: BidirectionalStream,
     local_tcp_addr: SocketAddr,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    // TokioIo adapts tokio::io traits (implemented by BidirectionalStream) to hyper::rt.
     let io = TokioIo::new(quic_stream);
 
     let service = service_fn(move |req: Request<Incoming>| {
@@ -191,14 +252,12 @@ async fn handle_http_tunnel(
         .serve_connection(io, service)
         .await
     {
-        // Connection closed by peer is common and not always an error worth elevating.
         log::debug!("HTTP connection on tunnel ended: {e}");
     }
 
     Ok(())
 }
 
-/// Collect the request body, display the full request, proxy to the local service, return the response.
 async fn proxy_and_display(
     req: Request<Incoming>,
     local_tcp_addr: SocketAddr,
@@ -234,8 +293,6 @@ async fn proxy_and_display(
 }
 
 fn display_http_request(parts: &hyper::http::request::Parts, body: &Bytes) {
-    // Use println so the request is always visible even at default Info log level
-    // and without mixing with logger prefixes.
     println!("---------- HTTP request ----------");
     println!("{} {} {:?}", parts.method, parts.uri, parts.version);
     for (name, value) in parts.headers.iter() {
@@ -254,7 +311,6 @@ fn display_http_request(parts: &hyper::http::request::Parts, body: &Bytes) {
     println!("----------------------------------");
 }
 
-/// Open a TCP connection to the local service and send the request with hyper's HTTP/1 client.
 async fn send_to_local(
     req: Request<Full<Bytes>>,
     local_tcp_addr: SocketAddr,

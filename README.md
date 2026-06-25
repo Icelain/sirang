@@ -1,135 +1,122 @@
 # sirang
 
-An experimental TCP tunnel over QUIC. Supports **forward** and **reverse** tunnels, automatic TLS certificate download for local clients, DNS resolution for domain-backed remotes, and multiple local clients per remote instance.
+An experimental TCP tunnel over QUIC, with **reverst-style** HTTP reverse tunnels:
+tunnel groups, host-based routing, round-robin load balancing, and optional registration auth.
 
 ## Install
 
 ```bash
 cargo install sirang
-```
-
-Or install prebuilt binaries from the [GitHub Releases](https://github.com/Icelain/sirang/releases) page.
-
-Or clone and build:
-
-```bash
+# or
 cargo build --release
 ```
 
 ## Forward tunnel
 
-Traffic flows: **local TCP → QUIC → remote TCP target**.
-
-### Remote
-
-```bash
-sirang forward remote --key <PATH> --cert <PATH> --forward <ADDRESS> [--quic <ADDRESS>]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--key` / `-k` | TLS private key (required) |
-| `--cert` / `-c` | TLS certificate (required) |
-| `--forward` / `-f` | TCP address to forward to (required) |
-| `--quic` / `-q` | QUIC listen address (default `0.0.0.0:4433`) |
-
-The remote also serves its certificate over TCP on **QUIC port + 1** so local clients can download it automatically.
-
-### Local
-
-```bash
-sirang forward local --remote <HOST:PORT> [--local <ADDRESS>]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--remote` / `-r` | Remote sirang instance as `host:port` or `ip:port` (required). Hostnames are DNS-resolved. |
-| `--local` / `-l` | Local TCP listen address (default `127.0.0.1:8080`) |
-
-No `--cert` is needed. On first connect the client downloads the remote certificate and caches it under `~/.sirang/certs/`.
-
-Multiple local clients may connect to the same remote forward instance; each has its own QUIC connection and traffic is handled independently.
-
-## Reverse tunnel
-
-Traffic flows: **remote TCP → QUIC → local TCP target**.
-
-### Remote
-
-```bash
-sirang reverse remote --key <PATH> --cert <PATH> [--quic <ADDRESS>] [--tcp <ADDRESS>]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--key` / `-k` | TLS private key (required) |
-| `--cert` / `-c` | TLS certificate (required) |
-| `--quic` / `-q` | QUIC listen address (default `0.0.0.0:4433`) |
-| `--tcp` / `-t` | Preferred TCP listen address for clients (default `0.0.0.0:5000`) |
-
-Certificate download works the same as forward (QUIC port + 1).
-
-Multiple local clients may attach to one reverse remote. The first client gets the preferred `--tcp` address; additional clients receive an ephemeral port on the same IP. Each client is told its public access address during the handshake.
-
-### Local
-
-```bash
-sirang reverse local --remote <HOST:PORT> --local <ADDRESS> [--http]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--remote` / `-r` | Remote sirang instance as `host:port` (required). Supports DNS names. |
-| `--local` / `-l` | Local TCP address to expose remotely (required) |
-| `--http` / `-H` | Optional HTTP mode (see below) |
-
-Again, no `--cert` on the local side.
-
-### HTTP mode (reverse local)
-
-With `--http`, traffic on each tunnelled connection is treated as HTTP/1. The local client uses [hyper](https://hyper.rs/) to:
-
-1. Read and parse requests from the TCP stream carried over QUIC
-2. Print each request (method, URI, headers, body) to the terminal
-3. Forward the request to `--local` and return the upstream response to the remote client
-
-Example:
+Traffic: **local TCP → QUIC → remote TCP target**.
 
 ```bash
 # Remote
-sirang reverse remote -k key.pem -c cert.pem
-
-# Local: expose a local HTTP service and log every request
-sirang reverse local -r tunnel.example.com:4433 -l 127.0.0.1:3000 --http
-```
-
-Without `--http`, the reverse tunnel remains a transparent TCP byte pipe.
-
-## Global options
-
-These apply to both `forward` and `reverse`:
-
-| Flag | Description |
-|------|-------------|
-| `--debug` / `-d` | Enable debug/trace logging |
-| `--buffersize` / `-b` | Copy buffer size in bytes (default 32 KiB) |
-
-## Examples
-
-```bash
-# Remote (VPS): forward tunnel to an internal HTTP service
 sirang forward remote -k key.pem -c cert.pem -f 127.0.0.1:80 -q 0.0.0.0:4433
 
-# Local: reach that service via DNS name (cert auto-downloaded)
+# Local (cert auto-downloaded; DNS names supported)
 sirang forward local -r tunnel.example.com:4433 -l 127.0.0.1:8080
-
-# Remote: reverse tunnel endpoint
-sirang reverse remote -k key.pem -c cert.pem
-
-# Local A and B can both connect to the same remote
-sirang reverse local -r tunnel.example.com:4433 -l 127.0.0.1:3000
-sirang reverse local -r tunnel.example.com:4433 -l 127.0.0.1:3001
 ```
+
+## Reverse tunnel
+
+### Legacy mode (per-client TCP ports)
+
+```bash
+sirang reverse remote -k key.pem -c cert.pem -q 0.0.0.0:4433 -t 0.0.0.0:5000
+sirang reverse local -r host:4433 -l 127.0.0.1:3000
+# optional: -H/--http to parse and print HTTP on the local side
+```
+
+Multiple locals each get their own remote TCP port (preferred port, then ephemeral).
+
+### Reverst-style HTTP groups (load-balanced)
+
+Like [reverst](https://github.com/flipt-io/reverst): clients register into a **tunnel group**;
+a shared HTTP listener on the remote routes by `Host` / `X-Forwarded-Host` and
+**round-robins** requests across registered locals.
+
+**Remote** (QUIC tunnel + HTTP front door):
+
+```bash
+# Quick local setup (default group "localhost", hosts localhost + 127.0.0.1)
+sirang reverse remote -k test_key.pem -c test_cert.pem \
+  -q 127.0.0.1:7171 --http 127.0.0.1:8181 \
+  --group localhost --user user --password pass
+
+# Or with a groups YAML file (reverst-compatible shape)
+sirang reverse remote -k test_key.pem -c test_cert.pem \
+  -q 127.0.0.1:7171 --http 127.0.0.1:8181 -g examples/groups.yml
+```
+
+**Local** (register + proxy to a local HTTP service):
+
+```bash
+sirang reverse local -r localhost:7171 -l 127.0.0.1:8080 \
+  --group localhost --user user --password pass
+```
+
+Then:
+
+```bash
+curl -H 'Host: localhost' http://127.0.0.1:8181/
+```
+
+Run several locals with the same `--group` to load-balance.
+
+#### Groups YAML
+
+```yaml
+groups:
+  "localhost":
+    hosts:
+      - "localhost"
+      - "127.0.0.1"
+    authentication:
+      basic:
+        username: "user"
+        password: "pass"
+      # bearer:
+      #   token: "some-token"
+```
+
+| Remote flags | Description |
+|--------------|-------------|
+| `--http` / `-H` | Shared HTTP listen address (enables group mode) |
+| `--groups` / `-g` | Path to groups YAML |
+| `--group` | Default group name if not using YAML (default `localhost`) |
+| `--user` / `--password` | Basic auth for the default group |
+| `--token` | Bearer auth for the default group |
+| `--quic` / `-q` | QUIC tunnel address (default `0.0.0.0:4433`) |
+
+| Local flags | Description |
+|-------------|-------------|
+| `--group` | Tunnel group to join (enables registration + HTTP proxy to `--local`) |
+| `--user` / `--password` | Basic auth for registration |
+| `--token` | Bearer token for registration |
+| `--http` / `-H` | Legacy per-stream HTTP parse/print (when not using `--group`) |
+
+TLS certificates for locals are still **auto-downloaded** from the remote (QUIC port + 1) and cached under `~/.sirang/certs/`.
+
+## Feature comparison with reverst (local parity)
+
+| Feature | reverst | sirang |
+|---------|---------|--------|
+| Reverse HTTP over QUIC | yes (HTTP/3) | yes (HTTP/1 over QUIC streams) |
+| Tunnel groups | yes | yes |
+| Host / X-Forwarded-Host routing | yes | yes |
+| Round-robin multi-client LB | yes | yes |
+| Basic / bearer registration auth | yes | yes |
+| Groups YAML | yes | yes |
+| Forward TCP tunnel | — | yes |
+| Auto cert download for clients | — | yes |
+| DNS for remote hostnames | yes (TLS SNI) | yes |
+| External / k8s auth & metrics | yes | not implemented |
 
 ## Development
 
@@ -137,7 +124,7 @@ sirang reverse local -r tunnel.example.com:4433 -l 127.0.0.1:3001
 cargo test
 ```
 
-Test certificates (`test_cert.pem` / `test_key.pem`) are self-signed for `localhost` / `127.0.0.1` and used by the QUIC integration tests.
+Test certificates (`test_cert.pem` / `test_key.pem`) are self-signed for `localhost` / `127.0.0.1`.
 
 ## Progress
 
@@ -147,3 +134,5 @@ Test certificates (`test_cert.pem` / `test_key.pem`) are self-signed for `localh
 - [x] Automatic certificate download for local clients
 - [x] DNS resolution for remote hosts
 - [x] Multiple local clients per remote instance
+- [x] HTTP mode (hyper) on reverse local
+- [x] Reverst-style tunnel groups, host routing, and load balancing

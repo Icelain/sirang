@@ -15,9 +15,13 @@ pub struct LocalConfig {
     pub buffer_size: usize,
     /// Optional override for cert cache path; default is ~/.sirang/certs/...
     pub cert_cache_path: Option<PathBuf>,
-    /// When true (reverse tunnel only), parse HTTP on QUIC streams with hyper,
-    /// display requests in the terminal, and proxy them to the local address.
+    /// When true (legacy reverse), parse HTTP on streams and print requests.
     pub http_mode: bool,
+    /// Tunnel group to join (reverst-style). When set, uses REGISTER handshake
+    /// and always proxies HTTP to local_tcp_server_addr.
+    pub tunnel_group: Option<String>,
+    /// Optional Authorization for group registration ("Basic …" or "Bearer …").
+    pub authorization: Option<String>,
 }
 
 impl Default for LocalConfig {
@@ -31,6 +35,8 @@ impl Default for LocalConfig {
             buffer_size: DEFAULT_BUFSIZE,
             cert_cache_path: None,
             http_mode: false,
+            tunnel_group: None,
+            authorization: None,
         }
     }
 }
