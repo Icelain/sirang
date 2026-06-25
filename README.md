@@ -147,4 +147,3 @@ Test certificates (`test_cert.pem` / `test_key.pem`) are self-signed for `localh
 - [x] Automatic certificate download for local clients
 - [x] DNS resolution for remote hosts
 - [x] Multiple local clients per remote instance
-- [x] Simplified CLI
