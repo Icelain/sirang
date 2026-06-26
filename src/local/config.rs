@@ -40,3 +40,19 @@ impl Default for LocalConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::LocalConfig;
+    use crate::common::{TunnelType, DEFAULT_BUFSIZE};
+
+    #[test]
+    fn test_local_config_default() {
+        let c = LocalConfig::default();
+        assert_eq!(c.tunnel_type, TunnelType::Forward);
+        assert_eq!(c.buffer_size, DEFAULT_BUFSIZE);
+        assert!(!c.http_mode);
+        assert!(c.tunnel_group.is_none());
+        assert_eq!(c.local_tcp_server_addr.port(), 8080);
+    }
+}

@@ -136,4 +136,21 @@ mod tests {
         assert_eq!(port, 4433);
         assert_eq!(addr.port(), 4433);
     }
+
+    #[test]
+    fn test_parse_host_port_errors() {
+        assert!(parse_host_port("noport").is_err());
+        assert!(parse_host_port(":4433").is_err());
+        assert!(parse_host_port("host:notaport").is_err());
+        assert!(parse_host_port("[::1").is_err());
+        assert!(parse_host_port("[::1]:xyz").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_resolve_ipv4_literal() {
+        let (host, port, addr) = resolve_host_port("127.0.0.1:9").await.unwrap();
+        assert_eq!(host, "127.0.0.1");
+        assert_eq!(port, 9);
+        assert_eq!(addr, "127.0.0.1:9".parse().unwrap());
+    }
 }

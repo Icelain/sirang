@@ -282,5 +282,89 @@ mod tests {
         );
         assert_eq!(groups.resolve_group("example.test").as_deref(), Some("app"));
         assert_eq!(groups.resolve_group("localhost:8181").as_deref(), Some("app"));
+        assert!(groups.resolve_group("unknown.example").is_none());
+        // group name itself is also a host key
+        assert_eq!(groups.resolve_group("app").as_deref(), Some("app"));
+    }
+
+    #[test]
+    fn test_auth_bearer_and_none() {
+        let open = TunnelGroups::single_group("g", vec!["h".into()], AuthConfig::default());
+        assert!(open.authenticate("g", None).is_ok());
+
+        let bearer = TunnelGroups::single_group(
+            "g",
+            vec!["h".into()],
+            AuthConfig {
+                basic: None,
+                bearer: Some(BearerAuth {
+                    token: "secret".into(),
+                }),
+            },
+        );
+        assert!(bearer.authenticate("g", Some("Bearer secret")).is_ok());
+        assert!(bearer.authenticate("g", Some("Bearer wrong")).is_err());
+        assert!(bearer.authenticate("g", Some("Basic x")).is_err());
+        assert!(bearer.authenticate("missing", Some("Bearer secret")).is_err());
+    }
+
+    #[test]
+    fn test_auth_basic_wrong_password() {
+        let groups = TunnelGroups::single_group(
+            "localhost",
+            vec!["localhost".into()],
+            AuthConfig {
+                basic: Some(BasicAuth {
+                    username: "user".into(),
+                    password: "pass".into(),
+                }),
+                bearer: None,
+            },
+        );
+        let bad = base64::engine::general_purpose::STANDARD.encode("user:nope");
+        assert!(groups
+            .authenticate("localhost", Some(&format!("Basic {bad}")))
+            .is_err());
+    }
+
+    #[test]
+    fn test_from_file_yaml() {
+        let dir = std::env::temp_dir().join(format!("sirang_groups_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("groups.yml");
+        std::fs::write(
+            &path,
+            r#"
+groups:
+  "web":
+    hosts:
+      - "web.local"
+    authentication:
+      bearer:
+        token: "t0ken"
+"#,
+        )
+        .unwrap();
+        let groups = TunnelGroups::from_file(&path).unwrap();
+        assert!(groups.group_names().contains(&"web".to_string()));
+        assert_eq!(groups.resolve_group("web.local").as_deref(), Some("web"));
+        assert!(groups.authenticate("web", Some("Bearer t0ken")).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_parse_register_errors() {
+        assert!(parse_register_line("NOPE").is_err());
+        assert!(parse_register_line("REGISTER ").is_err());
+        assert!(parse_register_line("REGISTER g Basic").is_err());
+    }
+
+    #[tokio::test]
+    async fn test_register_unknown_group() {
+        let groups = TunnelGroups::single_group("g", vec!["h".into()], AuthConfig::default());
+        // We cannot easily construct a real QUIC connection here; register on unknown group
+        // is tested via authenticate unknown above. Verify next_client empty.
+        assert!(groups.next_client("g").await.is_none());
+        assert!(groups.next_client("missing").await.is_none());
     }
 }

@@ -1,6 +1,6 @@
 pub const DEFAULT_BUFSIZE: usize = 1024 * 32;
 
-#[derive(PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum TunnelType {
     Forward,
     Reverse,
@@ -154,6 +154,68 @@ pub mod proto {
                 connected_cmd.deserialize(),
                 Bytes::from_static(b"CONNECTED 127.0.0.1:5050")
             );
+        }
+
+        #[test]
+        fn test_register_roundtrip() {
+            let cmd = ProtoCommand::REGISTER {
+                group: "localhost".into(),
+                authorization: None,
+            };
+            assert_eq!(
+                ProtoCommand::serialize(cmd.deserialize()).unwrap(),
+                cmd
+            );
+
+            let cmd = ProtoCommand::REGISTER {
+                group: "g".into(),
+                authorization: Some("Basic dXNlcjpwYXNz".into()),
+            };
+            assert_eq!(
+                ProtoCommand::serialize(cmd.deserialize()).unwrap(),
+                cmd
+            );
+        }
+
+        #[test]
+        fn test_registered_and_err_roundtrip() {
+            assert_eq!(
+                ProtoCommand::serialize(ProtoCommand::REGISTERED.deserialize()).unwrap(),
+                ProtoCommand::REGISTERED
+            );
+            let err = ProtoCommand::RegisterErr("unauthorized".into());
+            assert_eq!(
+                ProtoCommand::serialize(err.deserialize()).unwrap(),
+                ProtoCommand::RegisterErr("unauthorized".into())
+            );
+            let err_multi = ProtoCommand::serialize(Bytes::from_static(
+                b"REGISTER_ERR bad gateway no clients",
+            ))
+            .unwrap();
+            assert_eq!(
+                err_multi,
+                ProtoCommand::RegisterErr("bad gateway no clients".into())
+            );
+        }
+
+        #[test]
+        fn test_serialize_invalid() {
+            assert!(ProtoCommand::serialize(Bytes::from_static(b"NOPE")).is_none());
+            assert!(ProtoCommand::serialize(Bytes::from_static(b"CONNECTED")).is_none());
+            assert!(ProtoCommand::serialize(Bytes::from_static(b"CONNECTED not-an-addr")).is_none());
+            assert!(ProtoCommand::serialize(Bytes::new()).is_none());
+        }
+    }
+
+    #[cfg(test)]
+    mod tunnel_type_tests {
+        use super::super::{TunnelType, DEFAULT_BUFSIZE};
+
+        #[test]
+        fn test_defaults() {
+            assert_eq!(DEFAULT_BUFSIZE, 1024 * 32);
+            assert_eq!(TunnelType::Forward, TunnelType::Forward);
+            assert_ne!(TunnelType::Forward, TunnelType::Reverse);
         }
     }
 }

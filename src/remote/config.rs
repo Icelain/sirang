@@ -84,3 +84,32 @@ impl RemoteConfig {
         self.tunnel_groups = Some(TunnelGroups::single_group(name, hosts, auth));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::TunnelType;
+    use crate::remote::groups::AuthConfig;
+
+    #[test]
+    fn test_remote_config_defaults() {
+        let f = RemoteConfig::new(&TunnelType::Forward);
+        assert!(f.tcp_forward_address.is_none());
+        assert!(!f.is_group_http_mode());
+        assert_eq!(f.quic_address.port(), 4433);
+        assert_eq!(f.cert_listen_addr().port(), 4434);
+
+        let r = RemoteConfig::new(&TunnelType::Reverse);
+        assert!(r.tcp_reverse_address.is_some());
+        assert!(!r.is_group_http_mode());
+    }
+
+    #[test]
+    fn test_group_http_mode_flag() {
+        let mut r = RemoteConfig::new(&TunnelType::Reverse);
+        r.http_address = Some("127.0.0.1:8181".parse().unwrap());
+        assert!(!r.is_group_http_mode());
+        r.set_default_group("localhost", vec!["localhost".into()], AuthConfig::default());
+        assert!(r.is_group_http_mode());
+    }
+}

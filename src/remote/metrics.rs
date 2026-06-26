@@ -232,3 +232,87 @@ pub async fn serve_management(
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_metrics_counters_and_prometheus_render() {
+        let m = Metrics::new();
+        m.quic_accepted();
+        m.quic_accepted();
+        m.registration("localhost", "ok");
+        m.registration("localhost", "unauthorized");
+        m.client_registered("localhost");
+        m.client_registered("localhost");
+        m.client_unregistered("localhost");
+        m.proxy_request("localhost", "localhost", 200, Duration::from_millis(5));
+        m.proxy_request("localhost", "localhost", 502, Duration::from_millis(1));
+        m.proxy_error();
+
+        let text = m.render_prometheus();
+        assert!(text.contains("sirang_up 1"));
+        assert!(text.contains("sirang_quic_connections_accepted_total 2"));
+        assert!(text.contains("sirang_tunnel_group_registrations_total{group=\"localhost\",result=\"ok\"} 1"));
+        assert!(text.contains("sirang_tunnel_group_active_clients{group=\"localhost\"} 1"));
+        assert!(text.contains("status=\"200\""));
+        assert!(text.contains("sirang_proxy_errors_total 1"));
+        assert!(text.contains("sirang_proxy_request_duration_microseconds_count"));
+    }
+
+    #[test]
+    fn test_escape_in_labels() {
+        let m = Metrics::new();
+        m.registration("a\"b", "ok");
+        let text = m.render_prometheus();
+        assert!(text.contains("group=\"a\\\"b\""));
+    }
+
+    #[tokio::test]
+    async fn test_management_endpoints() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpStream;
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let m = Metrics::new();
+        m.registration("g", "ok");
+        let m2 = m.clone();
+        tokio::spawn(async move {
+            let _ = serve_management(addr, m2).await;
+        });
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        async fn http_get(addr: std::net::SocketAddr, path: &str) -> (u16, String) {
+            let mut s = TcpStream::connect(addr).await.unwrap();
+            let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+            s.write_all(req.as_bytes()).await.unwrap();
+            let mut buf = Vec::new();
+            s.read_to_end(&mut buf).await.unwrap();
+            let text = String::from_utf8_lossy(&buf).into_owned();
+            let status = text
+                .lines()
+                .next()
+                .and_then(|l| l.split_whitespace().nth(1))
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+            (status, text)
+        }
+
+        let (st, body) = http_get(addr, "/metrics").await;
+        assert_eq!(st, 200);
+        assert!(body.contains("sirang_up 1"));
+        assert!(body.contains("text/plain"));
+
+        let (st, body) = http_get(addr, "/healthz").await;
+        assert_eq!(st, 200);
+        assert!(body.contains("ok"));
+
+        let (st, _) = http_get(addr, "/nope").await;
+        assert_eq!(st, 404);
+    }
+}

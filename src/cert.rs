@@ -155,4 +155,67 @@ mod tests {
         assert!(fetched.contains("BEGIN CERTIFICATE"));
         assert_eq!(fetched, cert_pem);
     }
+
+    #[test]
+    fn test_cert_cache_path_sanitizes_host() {
+        let p = cert_cache_path("example.com", 4433);
+        let s = p.to_string_lossy();
+        assert!(s.contains("example.com_4433.pem"));
+        assert!(s.contains(".sirang"));
+        let p2 = cert_cache_path("a/b:c", 1);
+        let name = p2.file_name().unwrap().to_string_lossy();
+        assert!(!name.contains('/'));
+        assert!(name.contains("a_b_c_1.pem"));
+    }
+
+    #[tokio::test]
+    async fn test_load_or_fetch_uses_cache() {
+        let dir = std::env::temp_dir().join(format!("sirang_cert_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let cache = dir.join("cached.pem");
+        let pem = include_str!("../test_cert.pem");
+        std::fs::write(&cache, pem).unwrap();
+
+        let addr = SocketAddr::from_str("127.0.0.1:1").unwrap();
+        let loaded = load_or_fetch_cert("localhost", addr, &cache).await.unwrap();
+        assert_eq!(loaded, pem);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_load_or_fetch_downloads_and_caches() {
+        let cert_pem = include_str!("../test_cert.pem").to_string();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let cert_addr = listener.local_addr().unwrap();
+        drop(listener);
+        serve_cert(cert_addr, cert_pem.clone()).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // load_or_fetch uses quic_port + 1; bind cert server on that derived port via fake quic addr
+        let quic_port = cert_addr.port().saturating_sub(CERT_PORT_OFFSET);
+        let quic_addr = SocketAddr::new(cert_addr.ip(), quic_port);
+
+        let dir = std::env::temp_dir().join(format!("sirang_cert_dl_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let cache = dir.join("dl.pem");
+        assert!(!cache.exists());
+
+        let loaded = load_or_fetch_cert("localhost", quic_addr, &cache)
+            .await
+            .unwrap();
+        assert_eq!(loaded, cert_pem);
+        assert!(cache.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_cert_rejects_non_pem() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+        serve_cert(addr, "not a cert".into()).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(fetch_cert(addr).await.is_err());
+    }
 }
