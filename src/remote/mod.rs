@@ -1,5 +1,6 @@
 pub mod config;
 pub mod groups;
+pub mod metrics;
 mod forward;
 mod reverse;
 use crate::common::TunnelType;

@@ -108,7 +108,12 @@ pub async fn execute() {
                         )
                         .arg(arg!(--user <USER> "Basic auth username for the default group").required(false))
                         .arg(arg!(--password <PASS> "Basic auth password for the default group").required(false))
-                        .arg(arg!(--token <TOKEN> "Bearer token for the default group").required(false)),
+                        .arg(arg!(--token <TOKEN> "Bearer token for the default group").required(false))
+                        .arg(
+                            arg!(-m --management <ADDRESS> "Management HTTP address for /metrics and /healthz")
+                                .required(false)
+                                .value_parser(value_parser!(SocketAddr)),
+                        ),
                 )
                 .subcommand(
                     Command::new("local")
@@ -266,6 +271,12 @@ async fn handle_matches(
 
         if let Some(buffer_size) = buffersize {
             remote_config.buffer_size = *buffer_size;
+        }
+
+        if tunnel_type == TunnelType::Reverse {
+            if let Some(mgmt) = remote_matches.get_one::<SocketAddr>("management") {
+                remote_config.management_address = Some(*mgmt);
+            }
         }
 
         remote::start_remote(remote_config).await?;

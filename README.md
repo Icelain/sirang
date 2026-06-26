@@ -93,6 +93,25 @@ groups:
 | `--user` / `--password` | Basic auth for the default group |
 | `--token` | Bearer auth for the default group |
 | `--quic` / `-q` | QUIC tunnel address (default `0.0.0.0:4433`) |
+| `--management` / `-m` | Management HTTP address (`GET /metrics`, `GET /healthz`) |
+
+#### HTTP framing & observability (remote)
+
+In group HTTP mode the remote uses **hyper HTTP/1 framing** on both edges:
+
+- Public listener: preserve header case, collect bodies, set definitive `Content-Length`
+- Tunnel side: HTTP/1 client handshake over each QUIC stream (not raw byte copy)
+- Hop-by-hop headers stripped; `Via: 1.1 sirang` added on requests and responses
+- Structured proxy logs: method, URI, host, group, status, bytes, latency
+
+With `--management 127.0.0.1:9090` the remote exposes Prometheus text metrics:
+
+```bash
+curl http://127.0.0.1:9090/metrics
+curl http://127.0.0.1:9090/healthz
+```
+
+Metrics include registrations, active clients, proxy request counts by host/group/status, latency sums, QUIC accepts, and framing/proxy errors.
 
 | Local flags | Description |
 |-------------|-------------|
@@ -116,7 +135,8 @@ TLS certificates for locals are still **auto-downloaded** from the remote (QUIC 
 | Forward TCP tunnel | — | yes |
 | Auto cert download for clients | — | yes |
 | DNS for remote hostnames | yes (TLS SNI) | yes |
-| External / k8s auth & metrics | yes | not implemented |
+| Management metrics (`/metrics`) | yes | yes (Prometheus text) |
+| External / k8s auth | yes | not implemented |
 
 ## Development
 

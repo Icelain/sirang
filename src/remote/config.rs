@@ -26,6 +26,8 @@ pub struct RemoteConfig {
     pub tunnel_groups: Option<TunnelGroups>,
     /// Path groups were loaded from (for logging).
     pub groups_path: Option<PathBuf>,
+    /// Optional management HTTP address for /metrics and /healthz.
+    pub management_address: Option<SocketAddr>,
 }
 
 impl RemoteConfig {
@@ -43,6 +45,7 @@ impl RemoteConfig {
                 http_address: None,
                 tunnel_groups: None,
                 groups_path: None,
+                management_address: None,
             },
 
             TunnelType::Reverse => Self {
@@ -57,6 +60,7 @@ impl RemoteConfig {
                 http_address: None,
                 tunnel_groups: None,
                 groups_path: None,
+                management_address: None,
             },
         }
     }
