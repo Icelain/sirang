@@ -156,3 +156,7 @@ Test certificates (`test_cert.pem` / `test_key.pem`) are self-signed for `localh
 - [x] Multiple local clients per remote instance
 - [x] HTTP mode (hyper) on reverse local
 - [x] Reverst-style tunnel groups, host routing, and load balancing
+
+## Benchmarks
+
+See [BENCHMARKS.md](./BENCHMARKS.md) for sirang vs reverst loopback performance results.
