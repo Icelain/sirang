@@ -94,6 +94,27 @@ groups:
 | `--token` | Bearer auth for the default group |
 | `--quic` / `-q` | QUIC tunnel address (default `0.0.0.0:4433`) |
 | `--management` / `-m` | Management HTTP address (`GET /metrics`, `GET /healthz`) |
+| `--connect-password` | Optional password; remote challenges locals with `AUTH_REQUIRED` on connect |
+
+#### Connect password (optional)
+
+Reverse remotes can require a password from every local before the tunnel is established
+(legacy TCP mode and group HTTP mode):
+
+```bash
+# Remote challenges connecting locals
+sirang reverse remote -k key.pem -c cert.pem --connect-password s3cret ...
+
+# Local must supply the same password
+sirang reverse local -r host:4433 -l 127.0.0.1:3000 --connect-password s3cret
+# group mode:
+sirang reverse local -r host:4433 -l 127.0.0.1:3000 --group localhost --connect-password s3cret
+```
+
+Flow: remote sends `AUTH_REQUIRED` → local replies `AUTH <password>` → remote sends `AUTH_OK`
+(or `AUTH_ERR`) → normal `CONNECTED` / `REGISTER` handshake continues.
+
+This is separate from group **basic/bearer** registration auth (`--user` / `--password` / `--token`).
 
 #### HTTP framing & observability (remote)
 

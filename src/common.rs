@@ -22,6 +22,12 @@ pub mod proto {
         REGISTER { group: String, authorization: Option<String> },
         REGISTERED,
         RegisterErr(String),
+        /// Remote asks the local client for a connect password.
+        AuthRequired,
+        /// Local supplies the connect password (may contain spaces in the remainder).
+        Auth(String),
+        AuthOk,
+        AuthErr(String),
     }
 
     impl ProtoCommand {
@@ -48,6 +54,14 @@ pub mod proto {
                 ProtoCommand::REGISTERED => Bytes::from_static(b"REGISTERED"),
                 ProtoCommand::RegisterErr(msg) => {
                     Bytes::copy_from_slice(format!("REGISTER_ERR {msg}").as_bytes())
+                }
+                ProtoCommand::AuthRequired => Bytes::from_static(b"AUTH_REQUIRED"),
+                ProtoCommand::Auth(password) => {
+                    Bytes::copy_from_slice(format!("AUTH {password}").as_bytes())
+                }
+                ProtoCommand::AuthOk => Bytes::from_static(b"AUTH_OK"),
+                ProtoCommand::AuthErr(msg) => {
+                    Bytes::copy_from_slice(format!("AUTH_ERR {msg}").as_bytes())
                 }
             }
         }
@@ -76,21 +90,25 @@ pub mod proto {
                     b"REGISTERED" => {
                         return Some(ProtoCommand::REGISTERED);
                     }
+                    b"AUTH_REQUIRED" => {
+                        return Some(ProtoCommand::AuthRequired);
+                    }
+                    b"AUTH_OK" => {
+                        return Some(ProtoCommand::AuthOk);
+                    }
+                    b"AUTH_ERR" => {
+                        let msg = join_rest(&mut iter, "error");
+                        return Some(ProtoCommand::AuthErr(msg));
+                    }
+                    b"AUTH" => {
+                        let password = join_rest(&mut iter, "");
+                        if password.is_empty() {
+                            return None;
+                        }
+                        return Some(ProtoCommand::Auth(password));
+                    }
                     b"REGISTER_ERR" => {
-                        let msg = iter
-                            .next()
-                            .and_then(|b| str::from_utf8(b).ok())
-                            .unwrap_or("error")
-                            .to_string();
-                        // include remainder of message
-                        let rest: Vec<&str> = iter
-                            .filter_map(|b| str::from_utf8(b).ok())
-                            .collect();
-                        let msg = if rest.is_empty() {
-                            msg
-                        } else {
-                            format!("{msg} {}", rest.join(" "))
-                        };
+                        let msg = join_rest(&mut iter, "error");
                         return Some(ProtoCommand::RegisterErr(msg));
                     }
                     b"REGISTER" => {
@@ -112,6 +130,32 @@ pub mod proto {
 
             None
         }
+    }
+
+    fn join_rest<'a, I>(iter: &mut I, default: &str) -> String
+    where
+        I: Iterator<Item = &'a [u8]>,
+    {
+        let parts: Vec<&str> = iter.filter_map(|b| str::from_utf8(b).ok()).collect();
+        if parts.is_empty() {
+            default.to_string()
+        } else {
+            parts.join(" ")
+        }
+    }
+
+    /// Constant-time-ish password compare (length leak only).
+    pub fn passwords_equal(expected: &str, provided: &str) -> bool {
+        let a = expected.as_bytes();
+        let b = provided.as_bytes();
+        if a.len() != b.len() {
+            return false;
+        }
+        let mut diff = 0u8;
+        for (x, y) in a.iter().zip(b.iter()) {
+            diff |= x ^ y;
+        }
+        diff == 0
     }
 
     #[cfg(test)]
@@ -204,6 +248,26 @@ pub mod proto {
             assert!(ProtoCommand::serialize(Bytes::from_static(b"CONNECTED")).is_none());
             assert!(ProtoCommand::serialize(Bytes::from_static(b"CONNECTED not-an-addr")).is_none());
             assert!(ProtoCommand::serialize(Bytes::new()).is_none());
+        }
+
+        #[test]
+        fn test_auth_commands_roundtrip() {
+            for cmd in [
+                ProtoCommand::AuthRequired,
+                ProtoCommand::AuthOk,
+                ProtoCommand::Auth("s3cret".into()),
+                ProtoCommand::Auth("pass with spaces".into()),
+                ProtoCommand::AuthErr("bad password".into()),
+            ] {
+                assert_eq!(ProtoCommand::serialize(cmd.deserialize()).unwrap(), cmd);
+            }
+        }
+
+        #[test]
+        fn test_passwords_equal() {
+            assert!(super::passwords_equal("abc", "abc"));
+            assert!(!super::passwords_equal("abc", "abd"));
+            assert!(!super::passwords_equal("abc", "ab"));
         }
     }
 

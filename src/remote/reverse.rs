@@ -69,13 +69,17 @@ async fn run_group_http_mode(
 
     let groups_accept = groups.clone();
     let metrics_accept = metrics.clone();
+    let connect_password = config.connect_password.clone();
     tokio::spawn(async move {
         while let Some(conn) = quic_srv.accept().await {
             metrics_accept.quic_accepted();
             let groups = groups_accept.clone();
             let metrics = metrics_accept.clone();
+            let connect_password = connect_password.clone();
             tokio::spawn(async move {
-                if let Err(e) = handle_group_registration(conn, groups, metrics).await {
+                if let Err(e) =
+                    handle_group_registration(conn, groups, metrics, connect_password).await
+                {
                     log::warn!("Tunnel client session ended: {e}");
                 }
             });
@@ -85,10 +89,57 @@ async fn run_group_http_mode(
     serve_http_proxy(http_addr, groups, metrics).await
 }
 
+/// Challenge the local client for a connect password when configured.
+async fn challenge_connect_password(
+    stream: &mut BidirectionalStream,
+    expected: &str,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    stream
+        .send(proto::ProtoCommand::AuthRequired.deserialize())
+        .await?;
+    let data = stream
+        .receive()
+        .await?
+        .ok_or("client closed during password challenge")?;
+    match proto::ProtoCommand::serialize(data) {
+        Some(proto::ProtoCommand::Auth(provided))
+            if proto::passwords_equal(expected, &provided) =>
+        {
+            stream
+                .send(proto::ProtoCommand::AuthOk.deserialize())
+                .await?;
+            log::debug!("Connect password accepted");
+            Ok(())
+        }
+        Some(proto::ProtoCommand::Auth(_)) => {
+            let _ = stream
+                .send(proto::ProtoCommand::AuthErr("invalid password".into()).deserialize())
+                .await;
+            Err("invalid connect password".into())
+        }
+        Some(proto::ProtoCommand::REGISTER { .. }) => {
+            let _ = stream
+                .send(
+                    proto::ProtoCommand::AuthErr("password required before REGISTER".into())
+                        .deserialize(),
+                )
+                .await;
+            Err("password required".into())
+        }
+        _ => {
+            let _ = stream
+                .send(proto::ProtoCommand::AuthErr("expected AUTH".into()).deserialize())
+                .await;
+            Err("expected AUTH response".into())
+        }
+    }
+}
+
 async fn handle_group_registration(
     mut quic_conn: s2n_quic::Connection,
     groups: TunnelGroups,
     metrics: Metrics,
+    connect_password: Option<String>,
 ) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let peer = quic_conn
         .remote_addr()
@@ -98,6 +149,13 @@ async fn handle_group_registration(
     let Some(mut reg_stream) = quic_conn.accept_bidirectional_stream().await? else {
         return Ok(());
     };
+
+    if let Some(ref password) = connect_password {
+        if let Err(e) = challenge_connect_password(&mut reg_stream, password).await {
+            metrics.registration("_", "unauthorized");
+            return Err(e);
+        }
+    }
 
     let data = match reg_stream.receive().await? {
         Some(d) => d,
@@ -479,6 +537,10 @@ async fn handle_client_connection(
     let Some(mut command_stream) = quic_conn.accept_bidirectional_stream().await? else {
         return Ok(());
     };
+
+    if let Some(ref password) = config.connect_password {
+        challenge_connect_password(&mut command_stream, password).await?;
+    }
 
     let (tcp_listener, bound_addr) = setup_tcp_listener(&config).await?;
     send_connection_handshake(&mut command_stream, bound_addr).await?;

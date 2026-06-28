@@ -110,6 +110,10 @@ pub async fn execute() {
                         .arg(arg!(--password <PASS> "Basic auth password for the default group").required(false))
                         .arg(arg!(--token <TOKEN> "Bearer token for the default group").required(false))
                         .arg(
+                            arg!(--connect-password <PASS> "Require this password from locals on connect (AUTH challenge)")
+                                .required(false),
+                        )
+                        .arg(
                             arg!(-m --management <ADDRESS> "Management HTTP address for /metrics and /healthz")
                                 .required(false)
                                 .value_parser(value_parser!(SocketAddr)),
@@ -138,7 +142,11 @@ pub async fn execute() {
                         )
                         .arg(arg!(--user <USER> "Basic auth username for registration").required(false))
                         .arg(arg!(--password <PASS> "Basic auth password for registration").required(false))
-                        .arg(arg!(--token <TOKEN> "Bearer token for registration").required(false)),
+                        .arg(arg!(--token <TOKEN> "Bearer token for registration").required(false))
+                        .arg(
+                            arg!(--connect-password <PASS> "Password to send when remote challenges on connect")
+                                .required(false),
+                        ),
                 )
                 .arg(
                     arg!(-d --debug "Enable debug logging")
@@ -277,6 +285,9 @@ async fn handle_matches(
             if let Some(mgmt) = remote_matches.get_one::<SocketAddr>("management") {
                 remote_config.management_address = Some(*mgmt);
             }
+            if let Some(pw) = remote_matches.get_one::<String>("connect-password") {
+                remote_config.connect_password = Some(pw.clone());
+            }
         }
 
         remote::start_remote(remote_config).await?;
@@ -312,6 +323,9 @@ async fn handle_matches(
                 local_config.tunnel_group = Some(group.clone());
             }
             local_config.authorization = build_authorization(local_matches);
+            if let Some(pw) = local_matches.get_one::<String>("connect-password") {
+                local_config.connect_password = Some(pw.clone());
+            }
         }
 
         local_config.tunnel_type = tunnel_type;

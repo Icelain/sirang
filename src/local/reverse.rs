@@ -42,7 +42,8 @@ pub async fn reverse_local(
         run_stream_loop(quic_client, config.local_tcp_server_addr, true, config.buffer_size).await
     } else {
         let mut command_stream = quic_client.open_bidirectional_stream().await?;
-        let remote_tcp_address = perform_handshake(&mut command_stream).await?;
+        let remote_tcp_address =
+            perform_handshake(&mut command_stream, config.connect_password.as_deref()).await?;
         log::info!(
             "Access this tunnel at {} (via remote {})",
             remote_tcp_address,
@@ -97,6 +98,12 @@ async fn register_with_group(
         .ok_or_else(|| GenericError("tunnel group required".into()))?;
 
     let mut stream = quic_client.open_bidirectional_stream().await?;
+
+    // Remote may challenge for a connect password before accepting REGISTER.
+    if config.connect_password.is_some() {
+        answer_password_challenge(&mut stream, config.connect_password.as_deref()).await?;
+    }
+
     let cmd = ProtoCommand::REGISTER {
         group: group.clone(),
         authorization: config.authorization.clone(),
@@ -117,8 +124,65 @@ async fn register_with_group(
         Some(ProtoCommand::RegisterErr(msg)) => Err(Box::new(GenericError(format!(
             "registration rejected: {msg}"
         )))),
+        Some(ProtoCommand::AuthRequired) => Err(Box::new(GenericError(
+            "remote requires --connect-password".into(),
+        ))),
+        Some(ProtoCommand::AuthErr(msg)) => Err(Box::new(GenericError(format!(
+            "connect password rejected: {msg}"
+        )))),
         _ => Err(Box::new(GenericError(
             "unexpected registration response".into(),
+        ))),
+    }
+}
+
+/// Respond to AUTH_REQUIRED from the remote with AUTH / wait for AUTH_OK.
+async fn answer_password_challenge(
+    stream: &mut BidirectionalStream,
+    password: Option<&str>,
+) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+    let data = stream
+        .receive()
+        .await?
+        .ok_or_else(|| GenericError("remote closed during password challenge".into()))?;
+
+    match ProtoCommand::serialize(data) {
+        Some(ProtoCommand::AuthRequired) => {}
+        Some(ProtoCommand::AuthErr(msg)) => {
+            return Err(Box::new(GenericError(format!(
+                "connect password rejected: {msg}"
+            ))));
+        }
+        other => {
+            return Err(Box::new(GenericError(format!(
+                "expected AUTH_REQUIRED from remote, got {other:?}"
+            ))));
+        }
+    }
+
+    let password = password.ok_or_else(|| {
+        GenericError("remote requires a connect password; pass --connect-password".into())
+    })?;
+
+    stream
+        .send(ProtoCommand::Auth(password.to_string()).deserialize())
+        .await?;
+
+    let resp = stream
+        .receive()
+        .await?
+        .ok_or_else(|| GenericError("no AUTH response from remote".into()))?;
+
+    match ProtoCommand::serialize(resp) {
+        Some(ProtoCommand::AuthOk) => {
+            log::info!("Connect password accepted by remote");
+            Ok(())
+        }
+        Some(ProtoCommand::AuthErr(msg)) => Err(Box::new(GenericError(format!(
+            "connect password rejected: {msg}"
+        )))),
+        _ => Err(Box::new(GenericError(
+            "unexpected response to AUTH".into(),
         ))),
     }
 }
@@ -164,14 +228,48 @@ async fn setup_quic_connection(
 
 async fn perform_handshake(
     command_stream: &mut BidirectionalStream,
+    connect_password: Option<&str>,
 ) -> Result<SocketAddr, Box<dyn Error + Send + Sync + 'static>> {
     let handshake_data = receive_handshake_data(command_stream).await?;
     let cmd = serialize_handshake_command(handshake_data)?;
+
+    let cmd = match cmd {
+        ProtoCommand::AuthRequired => {
+            let password = connect_password.ok_or_else(|| {
+                GenericError("remote requires a connect password; pass --connect-password".into())
+            })?;
+            command_stream
+                .send(ProtoCommand::Auth(password.to_string()).deserialize())
+                .await?;
+            let resp = receive_handshake_data(command_stream).await?;
+            match serialize_handshake_command(resp)? {
+                ProtoCommand::AuthOk => {
+                    log::info!("Connect password accepted by remote");
+                    let next = receive_handshake_data(command_stream).await?;
+                    serialize_handshake_command(next)?
+                }
+                ProtoCommand::AuthErr(msg) => {
+                    return Err(Box::new(GenericError(format!(
+                        "connect password rejected: {msg}"
+                    ))));
+                }
+                _ => {
+                    return Err(Box::new(GenericError(
+                        "unexpected response to AUTH".into(),
+                    )));
+                }
+            }
+        }
+        other => other,
+    };
 
     log::debug!("Handshake complete");
 
     match cmd {
         ProtoCommand::CONNECTED(socket_addr) => Ok(socket_addr),
+        ProtoCommand::AuthErr(msg) => Err(Box::new(GenericError(format!(
+            "connect password rejected: {msg}"
+        )))),
         _ => Err(Box::new(GenericError(
             "Invalid command from remote instance".to_string(),
         ))),

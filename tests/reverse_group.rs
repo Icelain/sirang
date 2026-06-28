@@ -134,6 +134,65 @@ async fn reverse_group_http_proxy_and_metrics() {
 }
 
 #[tokio::test]
+async fn reverse_group_connect_password() {
+    let svc = spawn_tiny_http(b"pw-ok").await;
+
+    let mut remote_cfg = RemoteConfig::new(&TunnelType::Reverse);
+    remote_cfg.tls_cert = include_str!("../test_cert.pem").into();
+    remote_cfg.tls_key = include_str!("../test_key.pem").into();
+    let http_l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let http_addr = http_l.local_addr().unwrap();
+    drop(http_l);
+    let quic_l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let quic_addr = quic_l.local_addr().unwrap();
+    drop(quic_l);
+    remote_cfg.quic_address = quic_addr;
+    remote_cfg.http_address = Some(http_addr);
+    remote_cfg.connect_password = Some("s3cret".into());
+    remote_cfg.set_default_group(
+        "localhost",
+        vec!["localhost".into()],
+        AuthConfig::default(),
+    );
+
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let _ = remote::start_remote(remote_cfg).await;
+    });
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    // Wrong password fails
+    let mut bad = LocalConfig::default();
+    bad.tunnel_type = TunnelType::Reverse;
+    bad.remote_host = "localhost".into();
+    bad.remote_quic_server_addr = quic_addr;
+    bad.tls_cert = include_str!("../test_cert.pem").into();
+    bad.local_tcp_server_addr = svc;
+    bad.tunnel_group = Some("localhost".into());
+    bad.connect_password = Some("wrong".into());
+    let err = local::start_local(bad).await;
+    assert!(err.is_err(), "wrong password should fail");
+
+    // Correct password works
+    let mut good = LocalConfig::default();
+    good.tunnel_type = TunnelType::Reverse;
+    good.remote_host = "localhost".into();
+    good.remote_quic_server_addr = quic_addr;
+    good.tls_cert = include_str!("../test_cert.pem").into();
+    good.local_tcp_server_addr = svc;
+    good.tunnel_group = Some("localhost".into());
+    good.connect_password = Some("s3cret".into());
+    tokio::spawn(async move {
+        let _ = local::start_local(good).await;
+    });
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let (status, body) = http_get(http_addr, "localhost", "/").await;
+    assert_eq!(status, 200, "{}", String::from_utf8_lossy(&body));
+    assert!(body.windows(5).any(|w| w == b"pw-ok"));
+}
+
+#[tokio::test]
 async fn reverse_group_rejects_bad_auth() {
     let mut remote_cfg = RemoteConfig::new(&TunnelType::Reverse);
     remote_cfg.tls_cert = include_str!("../test_cert.pem").into();

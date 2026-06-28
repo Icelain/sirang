@@ -28,6 +28,8 @@ pub struct RemoteConfig {
     pub groups_path: Option<PathBuf>,
     /// Optional management HTTP address for /metrics and /healthz.
     pub management_address: Option<SocketAddr>,
+    /// When set, reverse remotes challenge locals with AUTH_REQUIRED on connect.
+    pub connect_password: Option<String>,
 }
 
 impl RemoteConfig {
@@ -46,6 +48,7 @@ impl RemoteConfig {
                 tunnel_groups: None,
                 groups_path: None,
                 management_address: None,
+                connect_password: None,
             },
 
             TunnelType::Reverse => Self {
@@ -61,6 +64,7 @@ impl RemoteConfig {
                 tunnel_groups: None,
                 groups_path: None,
                 management_address: None,
+                connect_password: None,
             },
         }
     }

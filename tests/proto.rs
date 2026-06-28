@@ -22,6 +22,10 @@ fn all_commands_roundtrip() {
             authorization: Some("Bearer tok".into()),
         },
         ProtoCommand::RegisterErr("nope".into()),
+        ProtoCommand::AuthRequired,
+        ProtoCommand::AuthOk,
+        ProtoCommand::Auth("s3cret word".into()),
+        ProtoCommand::AuthErr("bad".into()),
     ];
     for cmd in cases {
         let bytes = cmd.deserialize();

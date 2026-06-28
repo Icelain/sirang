@@ -22,6 +22,8 @@ pub struct LocalConfig {
     pub tunnel_group: Option<String>,
     /// Optional Authorization for group registration ("Basic …" or "Bearer …").
     pub authorization: Option<String>,
+    /// Password to send when the remote challenges with AUTH_REQUIRED.
+    pub connect_password: Option<String>,
 }
 
 impl Default for LocalConfig {
@@ -37,6 +39,7 @@ impl Default for LocalConfig {
             http_mode: false,
             tunnel_group: None,
             authorization: None,
+            connect_password: None,
         }
     }
 }
