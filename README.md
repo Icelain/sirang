@@ -143,6 +143,24 @@ Metrics include registrations, active clients, proxy request counts by host/grou
 
 TLS certificates for locals are still **auto-downloaded** from the remote (QUIC port + 1) and cached under `~/.sirang/certs/`.
 
+## Tunnel options
+
+Both `forward` and `reverse` accept these flags. They must be placed **between the tunnel type and the side** (i.e. right after `forward` or `reverse`, before `remote` or `local`):
+
+| Flag | Description |
+|------|-------------|
+| `--debug` / `-d` | Enable debug/trace logging |
+| `--buffersize` / `-b` | Copy buffer size in bytes (default 32 KiB) |
+
+```bash
+# Correct: flag between the tunnel type and the side
+sirang forward --debug local -r tunnel.example.com:4433
+sirang reverse -b 65536 remote -k key.pem -c cert.pem
+
+# Wrong: trailing flags are rejected
+sirang forward local -r tunnel.example.com:4433 --debug
+```
+
 ## Feature comparison with reverst (local parity)
 
 | Feature | reverst | sirang |
